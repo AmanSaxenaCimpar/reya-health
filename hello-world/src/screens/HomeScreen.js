@@ -19,6 +19,12 @@ const offeredServices = [
     detail: 'X-ray, ultrasound, and EKG from Reya Imaging, booked on its own.',
   },
   {
+    key: 'vax',
+    title: 'Reya Vax',
+    detail: 'Vaccination from Reya Vax.',
+    comingSoon: true,
+  },
+  {
     key: 'psych',
     title: 'Psychiatry televisits',
     detail: 'Psychiatry televisits from registered companies on Reya Health.',
@@ -156,9 +162,9 @@ export function HomeScreen({ onAbout, onBook, onCompanyBook }) {
       <View style={styles.body}>
         <Text style={styles.title}>Reya Health</Text>
         <Text style={styles.copy}>
-          Reya Lab and Reya Imaging are separate services, along with Psychiatry televisits and
-          Primary Care Televisit. Choose a service below, then choose At home or Service center when
-          you search.
+          Reya Lab and Reya Imaging are separate services. Reya Vax is the vaccination service
+          and is coming soon. Psychiatry televisits and Primary Care Televisit are also available.
+          Choose a service below, then choose At home or Service center when you search.
         </Text>
 
         <View style={styles.serviceRow}>
@@ -168,9 +174,15 @@ export function HomeScreen({ onAbout, onBook, onCompanyBook }) {
                 <Text style={styles.infoTitle}>{service.title}</Text>
                 <Text style={styles.infoDetail}>{service.detail}</Text>
               </View>
-              <Pressable onPress={() => openService(service)} style={styles.book}>
-                <Text style={styles.bookText}>Book</Text>
-              </Pressable>
+              {service.comingSoon ? (
+                <View style={styles.bookSoon}>
+                  <Text style={styles.bookSoonText}>Coming soon</Text>
+                </View>
+              ) : (
+                <Pressable onPress={() => openService(service)} style={styles.book}>
+                  <Text style={styles.bookText}>Book</Text>
+                </Pressable>
+              )}
             </View>
           ))}
         </View>
@@ -310,6 +322,16 @@ const styles = StyleSheet.create({
     cursor: 'pointer',
   },
   bookText: { fontFamily: font, color: colors.white, fontWeight: '700' },
+  bookSoon: {
+    marginTop: 'auto',
+    alignSelf: 'flex-start',
+    borderWidth: 1.5,
+    borderColor: colors.purple,
+    borderRadius: 10,
+    paddingHorizontal: 18,
+    paddingVertical: 12,
+  },
+  bookSoonText: { fontFamily: font, color: colors.purple, fontWeight: '700' },
   clickToBook: {
     marginTop: 12,
     alignSelf: 'flex-start',

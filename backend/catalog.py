@@ -836,7 +836,7 @@ def questionnaires_for(lab_codes=None, imaging_codes=None):
     lab_map = {item["code"]: item for item in LAB_TESTS}
     imaging_map = {item["code"]: item for item in IMAGING_TESTS}
 
-    sections = [{"key": "shared", "title": "Questions for all services", "scope": "shared", "questions": SHARED_QUESTIONS}]
+    sections = []
 
     seen_lab = set()
     for code in lab_codes:

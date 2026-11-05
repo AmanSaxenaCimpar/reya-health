@@ -104,7 +104,9 @@ export function BookingScreen({ visit, onHome, onAbout, onBack }) {
       return;
     }
     loadQuestionnaires(labPicked, imagingPicked)
-      .then((payload) => setSections(payload.sections || []))
+      .then((payload) =>
+        setSections((payload.sections || []).filter((section) => section.scope !== 'shared'))
+      )
       .catch(() => setLoadError('Could not load questionnaires from the Python API.'));
   }, [labPicked, imagingPicked]);
 
@@ -308,8 +310,7 @@ export function BookingScreen({ visit, onHome, onAbout, onBack }) {
         <View>
           <Text style={styles.title}>Questionnaires</Text>
           <Text style={styles.copy}>
-            Shared questions appear for every Lab or Imaging visit. Specific questions are added for
-            each selected test.
+            These questions are specific to the lab and imaging tests you selected.
           </Text>
           {urgentHit ? (
             <Text style={styles.error}>
