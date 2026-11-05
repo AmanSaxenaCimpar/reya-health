@@ -20,9 +20,16 @@ app.add_middleware(
 
 COMPANIES = [
     {
-        "id": "reya-lab-imaging",
-        "name": "Reya Lab and Imaging",
-        "services": ["lab", "imaging"],
+        "id": "reya-lab",
+        "name": "Reya Lab",
+        "services": ["lab"],
+        "book": "flow",
+        "url": None,
+    },
+    {
+        "id": "reya-imaging",
+        "name": "Reya Imaging",
+        "services": ["imaging"],
         "book": "flow",
         "url": None,
     },

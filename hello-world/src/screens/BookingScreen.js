@@ -108,7 +108,11 @@ export function BookingScreen({ visit, onHome, onAbout, onBack }) {
       .catch(() => setLoadError('Could not load questionnaires from the Python API.'));
   }, [labPicked, imagingPicked]);
 
-  const steps = ['order', 'choose'];
+  const lockedService = visit.service === 'lab' || visit.service === 'imaging';
+  const steps = ['order'];
+  if (!lockedService) {
+    steps.push('choose');
+  }
   if (services.includes('lab')) {
     steps.push('lab');
   }

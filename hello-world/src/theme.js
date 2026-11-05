@@ -9,8 +9,8 @@ export const colors = {
 };
 
 export const serviceLabels = {
-  lab: 'Lab',
-  imaging: 'Imaging',
+  lab: 'Reya Lab',
+  imaging: 'Reya Imaging',
   psych: 'Psychiatry televisits',
   primary: 'Primary Care Televisit',
 };

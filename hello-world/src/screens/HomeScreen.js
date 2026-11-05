@@ -10,13 +10,13 @@ import { colors, font, serviceLabels } from '../theme';
 const offeredServices = [
   {
     key: 'lab',
-    title: 'Lab',
-    detail: 'Laboratory testing from registered companies on Reya Health.',
+    title: 'Reya Lab',
+    detail: 'Laboratory testing from Reya Lab, booked on its own.',
   },
   {
     key: 'imaging',
-    title: 'Imaging',
-    detail: 'Imaging and EKG from registered companies on Reya Health.',
+    title: 'Reya Imaging',
+    detail: 'X-ray, ultrasound, and EKG from Reya Imaging, booked on its own.',
   },
   {
     key: 'psych',
@@ -156,7 +156,7 @@ export function HomeScreen({ onAbout, onBook, onCompanyBook }) {
       <View style={styles.body}>
         <Text style={styles.title}>Reya Health</Text>
         <Text style={styles.copy}>
-          Companies register on Reya Health to offer Lab, Imaging, Psychiatry televisits, and
+          Reya Lab and Reya Imaging are separate services, along with Psychiatry televisits and
           Primary Care Televisit. Choose a service below, then choose At home or Service center when
           you search.
         </Text>
