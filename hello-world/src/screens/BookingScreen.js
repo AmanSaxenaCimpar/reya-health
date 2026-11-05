@@ -66,6 +66,7 @@ export function BookingScreen({ visit, onHome, onAbout, onBack }) {
   const [labs, setLabs] = useState([]);
   const [imaging, setImaging] = useState([]);
   const [sections, setSections] = useState([]);
+  const [generalSection, setGeneralSection] = useState(null);
   const [loadError, setLoadError] = useState('');
   const [order, setOrder] = useState('');
   const [fileName, setFileName] = useState('');
@@ -101,12 +102,15 @@ export function BookingScreen({ visit, onHome, onAbout, onBack }) {
   useEffect(() => {
     if (!labPicked.length && !imagingPicked.length) {
       setSections([]);
+      setGeneralSection(null);
       return;
     }
     loadQuestionnaires(labPicked, imagingPicked)
-      .then((payload) =>
-        setSections((payload.sections || []).filter((section) => section.scope !== 'shared'))
-      )
+      .then((payload) => {
+        const rows = payload.sections || [];
+        setGeneralSection(rows.find((section) => section.scope === 'shared') || null);
+        setSections(rows.filter((section) => section.scope !== 'shared'));
+      })
       .catch(() => setLoadError('Could not load questionnaires from the Python API.'));
   }, [labPicked, imagingPicked]);
 
@@ -124,7 +128,7 @@ export function BookingScreen({ visit, onHome, onAbout, onBack }) {
   if (services.includes('lab') || services.includes('imaging')) {
     steps.push('questions');
   }
-  steps.push('schedule', 'info', 'payment');
+  steps.push('schedule', 'info', 'general', 'payment');
 
   const index = Math.max(steps.indexOf(stepKey), 0);
   const selectedLabs = labs.filter((item) => labPicked.includes(item.code));
@@ -135,7 +139,10 @@ export function BookingScreen({ visit, onHome, onAbout, onBack }) {
   const total = serviceFee + setupTotal;
   const allQuestions = sections.flatMap((section) => section.questions);
   const questionsDone = allQuestions.length > 0 && allQuestions.every((question) => answered(question, answers));
-  const urgentHit = allQuestions.some(
+  const generalQuestions = generalSection?.questions || [];
+  const generalDone =
+    generalQuestions.length > 0 && generalQuestions.every((question) => answered(question, answers));
+  const urgentHit = generalQuestions.some(
     (question) => question.urgent && answers[question.id]?.choice === question.escalate_if
   );
 
@@ -183,9 +190,10 @@ export function BookingScreen({ visit, onHome, onAbout, onBack }) {
     choose: services.length > 0,
     lab: labPicked.length > 0,
     imaging: imagingPicked.length > 0,
-    questions: questionsDone && !urgentHit,
+    questions: questionsDone,
     schedule: Boolean(date && time),
     info: info.first && info.last && info.dob && info.gender && info.relationship && info.phone && info.email,
+    general: generalDone && !urgentHit,
     payment: true,
   }[stepKey];
 
@@ -312,12 +320,6 @@ export function BookingScreen({ visit, onHome, onAbout, onBack }) {
           <Text style={styles.copy}>
             These questions are specific to the lab and imaging tests you selected.
           </Text>
-          {urgentHit ? (
-            <Text style={styles.error}>
-              Severe or rapidly worsening symptoms were reported. Do not continue online booking.
-              Call 911 or seek emergency care.
-            </Text>
-          ) : null}
           {sections.map((section) => (
             <View key={section.key} style={styles.section}>
               <Text style={styles.sectionTitle}>{section.title}</Text>
@@ -395,6 +397,32 @@ export function BookingScreen({ visit, onHome, onAbout, onBack }) {
           </View>
           <Field label="Phone" value={info.phone} placeholder="(312) 555-0100" onChangeText={(phone) => setInfo({ ...info, phone })} />
           <Field label="Email" value={info.email} placeholder="you@email.com" onChangeText={(email) => setInfo({ ...info, email })} />
+        </View>
+      ) : null}
+
+      {stepKey === 'general' ? (
+        <View>
+          <Text style={styles.title}>General questionnaire</Text>
+          <Text style={styles.copy}>These questions apply to every visit.</Text>
+          {urgentHit ? (
+            <Text style={styles.error}>
+              Severe or rapidly worsening symptoms were reported. Do not continue online booking.
+              Call 911 or seek emergency care.
+            </Text>
+          ) : null}
+          {generalSection ? (
+            <View style={styles.section}>
+              <Text style={styles.sectionTitle}>{generalSection.title}</Text>
+              {generalQuestions.map((question) => (
+                <QuestionBlock
+                  key={question.id}
+                  question={question}
+                  value={answers[question.id]}
+                  onChange={(patch) => setAnswer(question, patch)}
+                />
+              ))}
+            </View>
+          ) : null}
         </View>
       ) : null}
 
