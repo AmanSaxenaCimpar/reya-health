@@ -274,7 +274,9 @@ export function BookingScreen({ visit, onHome, onAbout, onBack }) {
           items={labs.map((item) => ({
             code: item.code,
             name: item.name,
-            detail: `${item.code} · CPT ${item.cpt}`,
+            detail: `${item.topic || 'Lab'} · ${item.code} · CPT ${item.cpt}`,
+            summary: item.summary,
+            sections: item.sections || [],
             price: item.price,
           }))}
           picked={labPicked}
@@ -288,7 +290,9 @@ export function BookingScreen({ visit, onHome, onAbout, onBack }) {
           items={imaging.map((item) => ({
             code: item.code,
             name: item.name,
-            detail: `${item.category} · CPT ${item.cpt} · setup ${money(item.setup_fee)}`,
+            detail: `${item.topic || item.category} · CPT ${item.cpt} · setup ${money(item.setup_fee)}`,
+            summary: item.summary,
+            sections: item.sections || [],
             price: item.price,
           }))}
           picked={imagingPicked}
@@ -526,21 +530,63 @@ function Choice({ title, detail, on, onPress }) {
 }
 
 function Catalog({ title, items, picked, onToggle }) {
+  const [openCode, setOpenCode] = useState(null);
+  const [openSection, setOpenSection] = useState('');
+
   return (
     <View>
       <Text style={styles.title}>{title}</Text>
-      <Text style={styles.copy}>Select one or more items.</Text>
+      <Text style={styles.copy}>
+        Select one or more items. Open test details to read what the test includes before you book.
+      </Text>
       {items.map((item) => {
         const on = picked.includes(item.code);
+        const detailsOpen = openCode === item.code;
         return (
-          <Pressable key={item.code} onPress={() => onToggle(item.code)} style={[styles.test, on && styles.testOn]}>
-            <View style={styles.testCopy}>
-              <Text style={styles.testName}>{item.name}</Text>
-              <Text style={styles.testDetail}>{item.detail}</Text>
-            </View>
-            <Text style={styles.price}>{money(item.price)}</Text>
-            <View style={[styles.box, on && styles.boxOn]}>{on ? <Text style={styles.check}>✓</Text> : null}</View>
-          </Pressable>
+          <View key={item.code} style={[styles.testCard, on && styles.testOn]}>
+            <Pressable onPress={() => onToggle(item.code)} style={styles.testRow}>
+              <View style={styles.testCopy}>
+                <Text style={styles.testName}>{item.name}</Text>
+                <Text style={styles.testDetail}>{item.detail}</Text>
+                {item.summary ? <Text style={styles.summary}>{item.summary}</Text> : null}
+              </View>
+              <Text style={styles.price}>{money(item.price)}</Text>
+              <View style={[styles.box, on && styles.boxOn]}>{on ? <Text style={styles.check}>✓</Text> : null}</View>
+            </Pressable>
+            {item.sections?.length ? (
+              <View>
+                <Pressable
+                  onPress={() => {
+                    setOpenCode(detailsOpen ? null : item.code);
+                    setOpenSection('');
+                  }}
+                  style={styles.detailsToggle}
+                >
+                  <Text style={styles.detailsToggleText}>
+                    {detailsOpen ? 'Hide test details' : 'Test details'}
+                  </Text>
+                </Pressable>
+                {detailsOpen
+                  ? item.sections.map((section) => {
+                      const sectionKey = `${item.code}:${section.title}`;
+                      const sectionOn = openSection === sectionKey;
+                      return (
+                        <View key={sectionKey} style={styles.dropdown}>
+                          <Pressable
+                            onPress={() => setOpenSection(sectionOn ? '' : sectionKey)}
+                            style={styles.dropdownHead}
+                          >
+                            <Text style={styles.dropdownTitle}>{section.title}</Text>
+                            <Text style={styles.dropdownMark}>{sectionOn ? '−' : '+'}</Text>
+                          </Pressable>
+                          {sectionOn ? <Text style={styles.dropdownBody}>{section.body}</Text> : null}
+                        </View>
+                      );
+                    })
+                  : null}
+              </View>
+            ) : null}
+          </View>
         );
       })}
     </View>
@@ -594,6 +640,70 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     gap: 12,
     cursor: 'pointer',
+  },
+  testCard: {
+    marginTop: 12,
+    borderWidth: 1,
+    borderColor: colors.line,
+    borderRadius: 14,
+    padding: 14,
+  },
+  testRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+    cursor: 'pointer',
+  },
+  summary: {
+    fontFamily: font,
+    color: colors.ink,
+    marginTop: 8,
+    lineHeight: 22,
+  },
+  detailsToggle: {
+    alignSelf: 'flex-start',
+    marginTop: 12,
+    cursor: 'pointer',
+  },
+  detailsToggleText: {
+    fontFamily: font,
+    color: colors.purple,
+    fontWeight: '700',
+  },
+  dropdown: {
+    marginTop: 8,
+    borderWidth: 1,
+    borderColor: colors.line,
+    borderRadius: 10,
+    overflow: 'hidden',
+  },
+  dropdownHead: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 12,
+    paddingHorizontal: 12,
+    paddingVertical: 12,
+    cursor: 'pointer',
+  },
+  dropdownTitle: {
+    fontFamily: font,
+    fontWeight: '700',
+    color: colors.ink,
+    flex: 1,
+  },
+  dropdownMark: {
+    fontFamily: font,
+    color: colors.purple,
+    fontWeight: '700',
+    fontSize: 18,
+  },
+  dropdownBody: {
+    fontFamily: font,
+    color: colors.ink,
+    lineHeight: 22,
+    paddingHorizontal: 12,
+    paddingBottom: 12,
   },
   testOn: { borderColor: colors.purple, borderWidth: 1.5 },
   testCopy: { flex: 1 },

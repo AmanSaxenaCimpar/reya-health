@@ -1,5 +1,7 @@
 """Service catalog and questionnaires mapped from the Reya DTC screenshots."""
 
+from test_guides import attach_guides
+
 FAMILY_CONDITIONS = [
     "Heart disease or heart attack",
     "Stroke",
@@ -309,6 +311,8 @@ IMAGING_TESTS = [
         "questionnaire_key": "venous",
     },
 ]
+
+attach_guides(LAB_TESTS, IMAGING_TESTS)
 
 SHARED_QUESTIONS = [
     {
