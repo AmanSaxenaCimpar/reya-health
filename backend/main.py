@@ -155,7 +155,7 @@ class BookingRequest(BaseModel):
 @app.post("/bookings")
 def create_booking(booking: BookingRequest):
     if not configured():
-        return {"saved": False, "reason": "not_configured", "lists": ["Reya Bookings", "Reya Booking Tests"]}
+        return {"saved": False, "reason": "not_configured"}
     try:
         return save_booking(booking.model_dump())
     except SharePointError as error:

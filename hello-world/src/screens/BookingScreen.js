@@ -281,8 +281,8 @@ export function BookingScreen({ visit, onHome, onAbout, onBack }) {
         <Text style={styles.copy}>
           Total {money(total)}.{' '}
           {stored
-            ? 'Labs, imaging, questionnaires, and patient details were saved to the Reya Bookings and Reya Booking Tests lists in SharePoint.'
-            : 'SharePoint is not connected yet, so this visit was not stored.'}
+            ? 'Labs, imaging, questionnaires, and patient details were sent to SharePoint.'
+            : 'Power Automate is not connected yet, so this visit was not stored.'}
         </Text>
         <View style={styles.navRow}>
           <Pressable onPress={onBack} style={styles.backOutline}>
