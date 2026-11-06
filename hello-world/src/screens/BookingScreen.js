@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
-import { loadImaging, loadLabs, loadQuestionnaires } from '../api';
+import { loadImaging, loadLabs, loadQuestionnaires, saveBooking } from '../api';
 import { SiteHeader } from '../SiteHeader';
 import { colors, font, money } from '../theme';
 
@@ -36,6 +36,36 @@ function pickFile() {
     input.onchange = () => resolve(input.files?.[0]?.name || '');
     input.click();
   });
+}
+
+function answerText(value) {
+  if (value == null || value === '') {
+    return '';
+  }
+  if (typeof value === 'string') {
+    return value;
+  }
+  const parts = [];
+  if (value.choice) {
+    parts.push(value.choice);
+  }
+  if (value.detail && String(value.detail).trim()) {
+    parts.push(String(value.detail).trim());
+  }
+  if (Array.isArray(value.selected) && value.selected.length) {
+    parts.push(value.selected.join(', '));
+  }
+  return parts.join(' — ');
+}
+
+function testLine(item) {
+  return {
+    code: item.code,
+    name: item.name,
+    cpt: item.cpt || '',
+    price: Number(item.price || 0),
+    setup_fee: Number(item.setup_fee || 0),
+  };
 }
 
 function answered(question, answers) {
@@ -89,6 +119,9 @@ export function BookingScreen({ visit, onHome, onAbout, onBack }) {
   });
   const [stepKey, setStepKey] = useState('order');
   const [done, setDone] = useState(false);
+  const [stored, setStored] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [saveError, setSaveError] = useState('');
 
   useEffect(() => {
     Promise.all([loadLabs(), loadImaging()])
@@ -197,6 +230,43 @@ export function BookingScreen({ visit, onHome, onAbout, onBack }) {
     payment: true,
   }[stepKey];
 
+  function confirmVisit() {
+    setSaving(true);
+    setSaveError('');
+    const sectionsToSave = [...sections, generalSection].filter(Boolean).map((section) => ({
+      title: section.title,
+      items: (section.questions || []).map((question) => ({
+        prompt: question.prompt,
+        answer: answerText(answers[question.id]),
+      })),
+    }));
+    saveBooking({
+      company: visit.company,
+      service: visit.service,
+      zip: visit.zip,
+      address: visit.address,
+      order,
+      order_file: fileName,
+      appointment_date: date ? formatDate(date) : '',
+      appointment_time: time,
+      labs: selectedLabs.map(testLine),
+      imaging: selectedImaging.map(testLine),
+      questions: sectionsToSave,
+      info,
+      service_fee: serviceFee,
+      setup_fee: setupTotal,
+      total,
+    })
+      .then((result) => {
+        setStored(Boolean(result.saved));
+        setDone(true);
+      })
+      .catch((error) => {
+        setSaveError(error.message || 'Could not save this visit to SharePoint.');
+      })
+      .finally(() => setSaving(false));
+  }
+
   if (done) {
     return (
       <Page onHome={onHome} onAbout={onAbout}>
@@ -208,7 +278,12 @@ export function BookingScreen({ visit, onHome, onAbout, onBack }) {
           {visit.company}. {chosen.map((item) => item.name).join(', ')} at home, ZIP {visit.zip}.{' '}
           {date ? formatDate(date) : ''} {time}.
         </Text>
-        <Text style={styles.copy}>Total {money(total)}. Payment is confirmed when the database is connected.</Text>
+        <Text style={styles.copy}>
+          Total {money(total)}.{' '}
+          {stored
+            ? 'Labs, imaging, questionnaires, and patient details were saved to the Reya Bookings and Reya Booking Tests lists in SharePoint.'
+            : 'SharePoint is not connected yet, so this visit was not stored.'}
+        </Text>
         <View style={styles.navRow}>
           <Pressable onPress={onBack} style={styles.backOutline}>
             <Text style={styles.backOutlineText}>← Back to Find care</Text>
@@ -440,6 +515,7 @@ export function BookingScreen({ visit, onHome, onAbout, onBack }) {
             {setupTotal > 0 ? <Text style={styles.copy}>Setup fee {money(setupTotal)}</Text> : null}
             <Text style={styles.answer}>Total {money(total)}</Text>
           </View>
+          {saveError ? <Text style={styles.error}>{saveError}</Text> : null}
         </View>
       ) : null}
 
@@ -447,8 +523,12 @@ export function BookingScreen({ visit, onHome, onAbout, onBack }) {
         <Pressable onPress={back} style={styles.backOutline}>
           <Text style={styles.backOutlineText}>← Back</Text>
         </Pressable>
-        {canContinue ? (
-          <Pressable onPress={stepKey === 'payment' ? () => setDone(true) : next} style={styles.continue}>
+        {saving ? (
+          <View style={styles.continueOff}>
+            <Text style={styles.continueOffText}>Saving to SharePoint…</Text>
+          </View>
+        ) : canContinue ? (
+          <Pressable onPress={stepKey === 'payment' ? confirmVisit : next} style={styles.continue}>
             <Text style={styles.continueText}>
               {stepKey === 'payment' ? `Confirm visit ${money(total)}` : 'Continue →'}
             </Text>

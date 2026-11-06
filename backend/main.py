@@ -4,8 +4,10 @@ from typing import List, Optional
 from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
+from pydantic import BaseModel, Field
 
 from catalog import IMAGING_TESTS, LAB_TESTS, questionnaires_for
+from sharepoint import SharePointError, configured, save_booking
 
 DIST = Path(__file__).resolve().parent.parent / "hello-world" / "dist"
 
@@ -102,6 +104,62 @@ def labs():
 @app.get("/imaging")
 def imaging():
     return IMAGING_TESTS
+
+
+class TestLine(BaseModel):
+    code: str = ""
+    name: str = ""
+    cpt: str = ""
+    price: float = 0
+    setup_fee: float = 0
+
+
+class PatientInfo(BaseModel):
+    first: str = ""
+    last: str = ""
+    dob: str = ""
+    gender: str = ""
+    relationship: str = ""
+    phone: str = ""
+    email: str = ""
+
+
+class QuestionItem(BaseModel):
+    prompt: str = ""
+    answer: str = ""
+
+
+class QuestionSection(BaseModel):
+    title: str = ""
+    items: List[QuestionItem] = Field(default_factory=list)
+
+
+class BookingRequest(BaseModel):
+    company: str = ""
+    service: str = ""
+    zip: str = ""
+    address: str = ""
+    order: str = ""
+    order_file: str = ""
+    appointment_date: str = ""
+    appointment_time: str = ""
+    labs: List[TestLine] = Field(default_factory=list)
+    imaging: List[TestLine] = Field(default_factory=list)
+    questions: List[QuestionSection] = Field(default_factory=list)
+    info: PatientInfo = Field(default_factory=PatientInfo)
+    service_fee: float = 0
+    setup_fee: float = 0
+    total: float = 0
+
+
+@app.post("/bookings")
+def create_booking(booking: BookingRequest):
+    if not configured():
+        return {"saved": False, "reason": "not_configured", "lists": ["Reya Bookings", "Reya Booking Tests"]}
+    try:
+        return save_booking(booking.model_dump())
+    except SharePointError as error:
+        raise HTTPException(status_code=502, detail=str(error)) from None
 
 
 @app.get("/questionnaires")

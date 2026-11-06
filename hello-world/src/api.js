@@ -44,6 +44,20 @@ export function loadImaging() {
   return getJson('/imaging');
 }
 
+export async function saveBooking(booking) {
+  const response = await fetch(`${API_URL}/bookings`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(booking),
+  });
+  const payload = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    const detail = payload.detail;
+    throw new Error(typeof detail === 'string' ? detail : 'Could not save this visit to SharePoint.');
+  }
+  return payload;
+}
+
 export function loadQuestionnaires(labCodes = [], imagingCodes = []) {
   const params = new URLSearchParams();
   labCodes.forEach((code) => params.append('lab', code));
