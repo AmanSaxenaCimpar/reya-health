@@ -183,89 +183,96 @@ export function AdminScreen({ onHome, onAbout }) {
             <Text style={styles.copy}>
               This login edits only {catalog.business_name}: its tests, test details, questionnaires, mileage prices, and its own staff logins.
             </Text>
-            <Text style={styles.heading}>Mileage price rules</Text>
-            <Text style={styles.copy}>
-              A visit total is the selected test fees, plus one fixed transportation fee, plus the extra amount Z for the mile band. Service stops at the last band. Example: 10–25 miles adds $25, 25–50 miles adds $50, and anything past 50 miles is not served.
-            </Text>
-            <Field label="Starting ZIP" value={rule.base_zip} onChangeText={(base_zip) => setRule({ ...rule, base_zip })} />
-            <Field
-              label="Fixed transportation fee ($)"
-              value={rule.transport_fee}
-              onChangeText={(transport_fee) => setRule({ ...rule, transport_fee })}
-            />
-            {rule.bands.map((band, index) => (
-              <View key={`${band.from_miles}-${index}`} style={styles.priceRow}>
-                <TextInput value={band.from_miles} onChangeText={(value) => updateBand(index, 'from_miles', value)} style={styles.priceInput} />
-                <Text style={styles.copy}>to</Text>
-                <TextInput value={band.to_miles} onChangeText={(value) => updateBand(index, 'to_miles', value)} style={styles.priceInput} />
-                <Text style={styles.copy}>miles, add $</Text>
-                <TextInput value={band.extra} onChangeText={(value) => updateBand(index, 'extra', value)} style={styles.priceInput} />
-                <Pressable
-                  onPress={() => setRule({ ...rule, bands: rule.bands.filter((_, bandIndex) => bandIndex !== index) })}
-                  style={styles.small}
-                >
-                  <Text style={styles.buttonText}>Remove</Text>
-                </Pressable>
-              </View>
-            ))}
-            <Pressable
-              onPress={() => setRule({ ...rule, bands: [...rule.bands, { from_miles: '', to_miles: '', extra: '' }] })}
-              style={styles.button}
-            >
-              <Text style={styles.buttonText}>Add a mile band</Text>
-            </Pressable>
-            <Pressable onPress={saveRule} style={styles.button}>
-              <Text style={styles.buttonText}>Save mileage rules</Text>
-            </Pressable>
-
-            <Text style={styles.heading}>Tests</Text>
-            <Text style={styles.copy}>
-              Add or remove one {catalog.role} test, or upload a CSV or Excel file. The first row must be: code, name, kind, cpt, price. Every row is saved as {catalog.role}. Save the file from Excel as CSV if the workbook upload fails.
-            </Text>
-            <Field label="Code" value={testForm.code} onChangeText={(code) => setTestForm({ ...testForm, code })} />
-            <Field label="Name" value={testForm.name} onChangeText={(name) => setTestForm({ ...testForm, name })} />
-            <Field label="CPT" value={testForm.cpt} onChangeText={(cpt) => setTestForm({ ...testForm, cpt })} />
-            <Field label="Price" value={testForm.price} onChangeText={(price) => setTestForm({ ...testForm, price })} />
-            <Pressable onPress={createTest} style={styles.button}>
-              <Text style={styles.buttonText}>Add test</Text>
-            </Pressable>
-            <Pressable onPress={uploadTests} style={styles.button}>
-              <Text style={styles.buttonText}>Upload CSV or Excel</Text>
-            </Pressable>
-            {catalog.tests.map((item) => (
-              <PriceRow
-                key={item.code}
-                item={item}
-                onSave={updatePrice}
-                onRemove={deleteTest}
-                onSaveContent={async (content) => {
-                  await saveContent(token, content);
-                  setNotice(`Saved details for ${content.code}.`);
+            <Panel title="General questionnaire">
+              <Text style={styles.copy}>These questions appear after patient information on this service only.</Text>
+              <QuestionEditor
+                questions={catalog.general_questions || []}
+                onSave={async (questions) => {
+                  await saveQuestions(token, { key: 'general', questions });
+                  setNotice('General questions saved.');
                 }}
               />
-            ))}
+            </Panel>
 
-            <Text style={styles.heading}>General questionnaire</Text>
-            <Text style={styles.copy}>These questions appear after patient information on this service only.</Text>
-            <QuestionEditor
-              questions={catalog.general_questions || []}
-              onSave={async (questions) => {
-                await saveQuestions(token, { key: 'general', questions });
-                setNotice('General questions saved.');
-              }}
-            />
-            {(catalog.question_groups || []).map((group) => (
-              <View key={group.key}>
-                <Text style={styles.heading}>{group.title}</Text>
-                <QuestionEditor
-                  questions={group.questions || []}
-                  onSave={async (questions) => {
-                    await saveQuestions(token, { key: group.key, questions });
-                    setNotice(`${group.title} questions saved.`);
+            <Panel title="Service questions">
+              <Text style={styles.copy}>Questions tied to this service’s tests. Each group scrolls inside this section.</Text>
+              {(catalog.question_groups || []).map((group) => (
+                <View key={group.key} style={styles.group}>
+                  <Text style={styles.subheading}>{group.title}</Text>
+                  <QuestionEditor
+                    questions={group.questions || []}
+                    onSave={async (questions) => {
+                      await saveQuestions(token, { key: group.key, questions });
+                      setNotice(`${group.title} questions saved.`);
+                    }}
+                  />
+                </View>
+              ))}
+            </Panel>
+
+            <Panel title="Add a service">
+              <Text style={styles.copy}>
+                Add or remove one {catalog.role} test, or upload a CSV or Excel file. The first row must be: code, name, kind, cpt, price. Every row is saved as {catalog.role}. Save the file from Excel as CSV if the workbook upload fails.
+              </Text>
+              <Field label="Code" value={testForm.code} onChangeText={(code) => setTestForm({ ...testForm, code })} />
+              <Field label="Name" value={testForm.name} onChangeText={(name) => setTestForm({ ...testForm, name })} />
+              <Field label="CPT" value={testForm.cpt} onChangeText={(cpt) => setTestForm({ ...testForm, cpt })} />
+              <Field label="Price" value={testForm.price} onChangeText={(price) => setTestForm({ ...testForm, price })} />
+              <Pressable onPress={createTest} style={styles.button}>
+                <Text style={styles.buttonText}>Add test</Text>
+              </Pressable>
+              <Pressable onPress={uploadTests} style={styles.button}>
+                <Text style={styles.buttonText}>Upload CSV or Excel</Text>
+              </Pressable>
+              {catalog.tests.map((item) => (
+                <PriceRow
+                  key={item.code}
+                  item={item}
+                  onSave={updatePrice}
+                  onRemove={deleteTest}
+                  onSaveContent={async (content) => {
+                    await saveContent(token, content);
+                    setNotice(`Saved details for ${content.code}.`);
                   }}
                 />
-              </View>
-            ))}
+              ))}
+            </Panel>
+
+            <Panel title="Pricing by distance">
+              <Text style={styles.copy}>
+                A visit total is the selected test fees, plus one fixed transportation fee, plus the extra amount Z for the mile band. Service stops at the last band. Example: 10–25 miles adds $25, 25–50 miles adds $50, and anything past 50 miles is not served.
+              </Text>
+              <Field label="Starting ZIP" value={rule.base_zip} onChangeText={(base_zip) => setRule({ ...rule, base_zip })} />
+              <Field
+                label="Fixed transportation fee ($)"
+                value={rule.transport_fee}
+                onChangeText={(transport_fee) => setRule({ ...rule, transport_fee })}
+              />
+              {rule.bands.map((band, index) => (
+                <View key={`${band.from_miles}-${index}`} style={styles.priceRow}>
+                  <TextInput value={band.from_miles} onChangeText={(value) => updateBand(index, 'from_miles', value)} style={styles.priceInput} />
+                  <Text style={styles.copy}>to</Text>
+                  <TextInput value={band.to_miles} onChangeText={(value) => updateBand(index, 'to_miles', value)} style={styles.priceInput} />
+                  <Text style={styles.copy}>miles, add $</Text>
+                  <TextInput value={band.extra} onChangeText={(value) => updateBand(index, 'extra', value)} style={styles.priceInput} />
+                  <Pressable
+                    onPress={() => setRule({ ...rule, bands: rule.bands.filter((_, bandIndex) => bandIndex !== index) })}
+                    style={styles.small}
+                  >
+                    <Text style={styles.buttonText}>Remove</Text>
+                  </Pressable>
+                </View>
+              ))}
+              <Pressable
+                onPress={() => setRule({ ...rule, bands: [...rule.bands, { from_miles: '', to_miles: '', extra: '' }] })}
+                style={styles.button}
+              >
+                <Text style={styles.buttonText}>Add a mile band</Text>
+              </Pressable>
+              <Pressable onPress={saveRule} style={styles.button}>
+                <Text style={styles.buttonText}>Save mileage rules</Text>
+              </Pressable>
+            </Panel>
 
             <Text style={styles.heading}>Register a business</Text>
             <Text style={styles.copy}>
@@ -298,6 +305,17 @@ export function AdminScreen({ onHome, onAbout }) {
         )}
       </View>
     </ScrollView>
+  );
+}
+
+function Panel({ title, children }) {
+  return (
+    <View style={styles.panel}>
+      <Text style={styles.heading}>{title}</Text>
+      <ScrollView style={styles.panelScroll} contentContainerStyle={styles.panelContent} nestedScrollEnabled>
+        {children}
+      </ScrollView>
+    </View>
   );
 }
 
@@ -409,7 +427,19 @@ const styles = StyleSheet.create({
   content: { paddingBottom: 48 },
   body: { maxWidth: 880, width: '100%', alignSelf: 'center', padding: 24 },
   title: { fontFamily: font, fontSize: 32, fontWeight: '700', color: colors.ink },
-  heading: { fontFamily: font, fontSize: 22, fontWeight: '700', color: colors.ink, marginTop: 28 },
+  panel: {
+    marginTop: 18,
+    borderWidth: 1,
+    borderColor: colors.line,
+    borderRadius: 14,
+    backgroundColor: colors.white,
+    overflow: 'hidden',
+  },
+  panelScroll: { maxHeight: 420 },
+  panelContent: { paddingHorizontal: 16, paddingBottom: 16 },
+  heading: { fontFamily: font, fontSize: 22, fontWeight: '700', color: colors.ink, padding: 16, paddingBottom: 0 },
+  subheading: { fontFamily: font, fontSize: 16, fontWeight: '700', color: colors.ink, marginTop: 16 },
+  group: { marginTop: 8, paddingTop: 8, borderTopWidth: 1, borderTopColor: colors.line },
   copy: { fontFamily: font, color: colors.ink, marginTop: 8, lineHeight: 22 },
   meta: { fontFamily: font, color: colors.muted, fontSize: 12 },
   card: { marginTop: 18, maxWidth: 420 },
