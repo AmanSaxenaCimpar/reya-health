@@ -5,7 +5,6 @@ import {
   inviteLogin,
   officeCatalog,
   officeLogin,
-  registerBusiness,
   removeOfficeTest,
   saveContent,
   savePrice,
@@ -32,7 +31,6 @@ export function AdminScreen({ onHome, onAbout }) {
   const [catalog, setCatalog] = useState(null);
   const [rule, setRule] = useState({ base_zip: '60611', transport_fee: '40', bands: [] });
   const [testForm, setTestForm] = useState({ code: '', name: '', kind: 'lab', cpt: '', price: '' });
-  const [business, setBusiness] = useState({ name: '', email: '', service: 'lab' });
   const [invite, setInvite] = useState({ name: '', email: '', role: 'provider' });
   const [notice, setNotice] = useState('');
   const [section, setSection] = useState('general');
@@ -138,18 +136,6 @@ export function AdminScreen({ onHome, onAbout }) {
     input.click();
   }
 
-  async function addBusiness() {
-    const created = await registerBusiness(token, {
-      name: business.name,
-      email: business.email,
-      services: [catalog?.role || 'lab'],
-    });
-    setBusiness({ name: '', email: '', service: catalog?.role || 'lab' });
-    setNotice(
-      `${created.name} has its own back office. Email ${created.email}. Password ${created.password}. Sign out and use that login. This office cannot see or edit that business.`
-    );
-  }
-
   async function sendInvite() {
     const result = await inviteLogin(token, invite);
     setNotice(
@@ -168,7 +154,7 @@ export function AdminScreen({ onHome, onAbout }) {
         {!token || !catalog ? (
           <View style={styles.card}>
             <Text style={styles.copy}>
-              Each business has its own login. A lab office cannot see an imaging office, and a new business gets a new login when it is registered.
+              Sign in with this business’s login. A lab office cannot see or edit an imaging office.
             </Text>
             <Field label="Email" value={email} onChangeText={setEmail} />
             <Field label="Password" value={password} secureTextEntry onChangeText={setPassword} />
@@ -202,21 +188,23 @@ export function AdminScreen({ onHome, onAbout }) {
             </View>
 
             <View style={section === 'general' ? styles.section : styles.hidden}>
-              <Text style={styles.copy}>These questions appear after patient information on this service only.</Text>
-              <QuestionEditor
-                questions={catalog.general_questions || []}
-                onSave={async (questions) => {
-                  await saveQuestions(token, { key: 'general', questions });
-                  setNotice('General questions saved.');
-                }}
-              />
+              <View style={styles.panel}>
+                <Text style={styles.panelTitle}>Questions after patient information</Text>
+                <Text style={styles.copy}>These appear on this service only, after the patient details step.</Text>
+                <QuestionEditor
+                  questions={catalog.general_questions || []}
+                  onSave={async (questions) => {
+                    await saveQuestions(token, { key: 'general', questions });
+                    setNotice('General questions saved.');
+                  }}
+                />
+              </View>
             </View>
 
             <View style={section === 'service' ? styles.section : styles.hidden}>
-              <Text style={styles.copy}>Questions tied to this service’s tests.</Text>
               {(catalog.question_groups || []).map((group) => (
-                <View key={group.key} style={styles.group}>
-                  <Text style={styles.subheading}>{group.title}</Text>
+                <View key={group.key} style={styles.panel}>
+                  <Text style={styles.panelTitle}>{group.title}</Text>
                   <QuestionEditor
                     questions={group.questions || []}
                     onSave={async (questions) => {
@@ -229,19 +217,26 @@ export function AdminScreen({ onHome, onAbout }) {
             </View>
 
             <View style={section === 'tests' ? styles.section : styles.hidden}>
-              <Text style={styles.copy}>
-                Add or remove one {catalog.role} test, or upload a CSV or Excel file. The first row must be: code, name, kind, cpt, price. Every row is saved as {catalog.role}. Save the file from Excel as CSV if the workbook upload fails.
-              </Text>
-              <Field label="Code" value={testForm.code} onChangeText={(code) => setTestForm({ ...testForm, code })} />
-              <Field label="Name" value={testForm.name} onChangeText={(name) => setTestForm({ ...testForm, name })} />
-              <Field label="CPT" value={testForm.cpt} onChangeText={(cpt) => setTestForm({ ...testForm, cpt })} />
-              <Field label="Price" value={testForm.price} onChangeText={(price) => setTestForm({ ...testForm, price })} />
-              <Pressable onPress={createTest} style={styles.button}>
-                <Text style={styles.buttonText}>Add test</Text>
-              </Pressable>
-              <Pressable onPress={uploadTests} style={styles.button}>
-                <Text style={styles.buttonText}>Upload CSV or Excel</Text>
-              </Pressable>
+              <View style={styles.panel}>
+                <Text style={styles.panelTitle}>New {catalog.role} test</Text>
+                <Text style={styles.copy}>
+                  Fill the four fields, or upload a CSV or Excel file. The first row must be code, name, kind, cpt, price. Every row is saved as {catalog.role}.
+                </Text>
+                <View style={styles.formGrid}>
+                  <Field label="Code" value={testForm.code} placeholder="CBC" onChangeText={(code) => setTestForm({ ...testForm, code })} />
+                  <Field label="Name" wide value={testForm.name} placeholder="Complete blood count" onChangeText={(name) => setTestForm({ ...testForm, name })} />
+                  <Field label="CPT" value={testForm.cpt} placeholder="85025" onChangeText={(cpt) => setTestForm({ ...testForm, cpt })} />
+                  <Field label="Price" value={testForm.price} placeholder="39" keyboardType="decimal-pad" onChangeText={(price) => setTestForm({ ...testForm, price })} />
+                </View>
+                <View style={styles.actions}>
+                  <Pressable onPress={createTest} style={styles.button}>
+                    <Text style={styles.buttonText}>Add test</Text>
+                  </Pressable>
+                  <Pressable onPress={uploadTests} style={styles.ghost}>
+                    <Text style={styles.ghostText}>Upload CSV or Excel</Text>
+                  </Pressable>
+                </View>
+              </View>
               {catalog.tests.map((item) => (
                 <PriceRow
                   key={item.code}
@@ -257,68 +252,75 @@ export function AdminScreen({ onHome, onAbout }) {
             </View>
 
             <View style={section === 'pricing' ? styles.section : styles.hidden}>
-              <Text style={styles.copy}>
-                A visit total is the selected test fees, plus one fixed transportation fee, plus the extra amount Z for the mile band. Service stops at the last band. Example: 10–25 miles adds $25, 25–50 miles adds $50, and anything past 50 miles is not served.
-              </Text>
-              <Field label="Starting ZIP" value={rule.base_zip} onChangeText={(base_zip) => setRule({ ...rule, base_zip })} />
-              <Field
-                label="Fixed transportation fee ($)"
-                value={rule.transport_fee}
-                onChangeText={(transport_fee) => setRule({ ...rule, transport_fee })}
-              />
+              <View style={styles.panel}>
+                <Text style={styles.panelTitle}>How the visit is priced</Text>
+                <Text style={styles.copy}>
+                  Test fees, plus one transportation fee, plus the dollar amount for the mile band. Service stops at the last band.
+                </Text>
+                <View style={styles.formGrid}>
+                  <Field label="Starting ZIP" value={rule.base_zip} placeholder="60611" onChangeText={(base_zip) => setRule({ ...rule, base_zip })} />
+                  <Field
+                    label="Transportation fee ($)"
+                    value={rule.transport_fee}
+                    placeholder="40"
+                    keyboardType="decimal-pad"
+                    onChangeText={(transport_fee) => setRule({ ...rule, transport_fee })}
+                  />
+                </View>
+              </View>
               {rule.bands.map((band, index) => (
-                <View key={`${band.from_miles}-${index}`} style={styles.priceRow}>
-                  <TextInput value={band.from_miles} onChangeText={(value) => updateBand(index, 'from_miles', value)} style={styles.priceInput} />
-                  <Text style={styles.copy}>to</Text>
-                  <TextInput value={band.to_miles} onChangeText={(value) => updateBand(index, 'to_miles', value)} style={styles.priceInput} />
-                  <Text style={styles.copy}>miles, add $</Text>
-                  <TextInput value={band.extra} onChangeText={(value) => updateBand(index, 'extra', value)} style={styles.priceInput} />
-                  <Pressable
-                    onPress={() => setRule({ ...rule, bands: rule.bands.filter((_, bandIndex) => bandIndex !== index) })}
-                    style={styles.small}
-                  >
-                    <Text style={styles.buttonText}>Remove</Text>
-                  </Pressable>
+                <View key={`${band.from_miles}-${index}`} style={styles.panel}>
+                  <View style={styles.testHead}>
+                    <Text style={styles.panelTitle}>Band {index + 1}</Text>
+                    <Pressable
+                      onPress={() => setRule({ ...rule, bands: rule.bands.filter((_, bandIndex) => bandIndex !== index) })}
+                      style={styles.quiet}
+                    >
+                      <Text style={styles.quietText}>Remove</Text>
+                    </Pressable>
+                  </View>
+                  <View style={styles.formGrid}>
+                    <Field label="From miles" value={band.from_miles} keyboardType="decimal-pad" onChangeText={(value) => updateBand(index, 'from_miles', value)} />
+                    <Field label="To miles" value={band.to_miles} keyboardType="decimal-pad" onChangeText={(value) => updateBand(index, 'to_miles', value)} />
+                    <Field label="Add ($)" value={band.extra} keyboardType="decimal-pad" onChangeText={(value) => updateBand(index, 'extra', value)} />
+                  </View>
                 </View>
               ))}
-              <Pressable
-                onPress={() => setRule({ ...rule, bands: [...rule.bands, { from_miles: '', to_miles: '', extra: '' }] })}
-                style={styles.button}
-              >
-                <Text style={styles.buttonText}>Add a mile band</Text>
-              </Pressable>
-              <Pressable onPress={saveRule} style={styles.button}>
-                <Text style={styles.buttonText}>Save mileage rules</Text>
-              </Pressable>
+              <View style={styles.actions}>
+                <Pressable
+                  onPress={() => setRule({ ...rule, bands: [...rule.bands, { from_miles: '', to_miles: '', extra: '' }] })}
+                  style={styles.ghost}
+                >
+                  <Text style={styles.ghostText}>Add a mile band</Text>
+                </Pressable>
+                <Pressable onPress={saveRule} style={styles.button}>
+                  <Text style={styles.buttonText}>Save mileage rules</Text>
+                </Pressable>
+              </View>
             </View>
 
-            <Text style={styles.heading}>Register a business</Text>
-            <Text style={styles.copy}>
-              This creates a separate {catalog.role} business with its own login. It starts empty, uses a different tax identity, and is never billed with {catalog.business_name}.
-            </Text>
-            <Field label="Business name" value={business.name} onChangeText={(name) => setBusiness({ ...business, name })} />
-            <Field label="Contact email" value={business.email} onChangeText={(email) => setBusiness({ ...business, email })} />
-            <Pressable onPress={addBusiness} style={styles.button}>
-              <Text style={styles.buttonText}>Add business</Text>
-            </Pressable>
-            <Text style={styles.heading}>Staff logins</Text>
-            <Text style={styles.copy}>
-              {catalog.email_ready
-                ? `An email is sent with a temporary password. The login can edit only ${catalog.business_name}.`
-                : `Email is not connected yet. The temporary password is shown here once and works only for ${catalog.business_name}.`}
-            </Text>
-            <Field label="Name" value={invite.name} onChangeText={(name) => setInvite({ ...invite, name })} />
-            <Field label="Email" value={invite.email} onChangeText={(email) => setInvite({ ...invite, email })} />
-            <View style={styles.row}>
-              {['provider', 'staff'].map((role) => (
-                <Pressable key={role} onPress={() => setInvite({ ...invite, role })} style={styles.check}>
-                  <Text style={styles.copy}>{invite.role === role ? '✓' : '○'} {role}</Text>
-                </Pressable>
-              ))}
+            <View style={styles.panel}>
+              <Text style={styles.panelTitle}>Staff logins</Text>
+              <Text style={styles.copy}>
+                {catalog.email_ready
+                  ? `An email is sent with a temporary password. The login can edit only ${catalog.business_name}.`
+                  : `Email is not connected yet. The temporary password is shown here once and works only for ${catalog.business_name}.`}
+              </Text>
+              <View style={styles.formGrid}>
+                <Field label="Name" value={invite.name} placeholder="Alex Rivera" onChangeText={(name) => setInvite({ ...invite, name })} />
+                <Field label="Email" value={invite.email} placeholder="alex@clinic.com" autoCapitalize="none" onChangeText={(email) => setInvite({ ...invite, email })} />
+              </View>
+              <View style={styles.segment}>
+                {['provider', 'staff'].map((role) => (
+                  <Pressable key={role} onPress={() => setInvite({ ...invite, role })} style={[styles.segmentItem, invite.role === role && styles.segmentOn]}>
+                    <Text style={[styles.segmentText, invite.role === role && styles.segmentTextOn]}>{role}</Text>
+                  </Pressable>
+                ))}
+              </View>
+              <Pressable onPress={sendInvite} style={styles.button}>
+                <Text style={styles.buttonText}>Create login</Text>
+              </Pressable>
             </View>
-            <Pressable onPress={sendInvite} style={styles.button}>
-              <Text style={styles.buttonText}>Create login</Text>
-            </Pressable>
           </View>
         )}
       </View>
@@ -333,27 +335,24 @@ function PriceRow({ item, onSave, onRemove, onSaveContent }) {
     (item.sections || []).map((section) => `${section.title || ''}\n${section.body || ''}`).join('\n\n')
   );
   return (
-    <View style={styles.testCard}>
-      <View style={styles.priceRow}>
-        <View style={styles.priceCopy}>
-          <Text style={styles.copy}>{item.name}</Text>
+    <View style={styles.panel}>
+      <View style={styles.testHead}>
+        <View style={styles.grow}>
+          <Text style={styles.panelTitle}>{item.name}</Text>
           <Text style={styles.meta}>{item.kind} · {item.code}</Text>
         </View>
-        <TextInput value={price} onChangeText={setPrice} style={styles.priceInput} />
-        <Pressable onPress={() => onSave(item.code, price)} style={styles.small}>
-          <Text style={styles.buttonText}>Save price</Text>
-        </Pressable>
-        <Pressable onPress={() => onRemove(item.code)} style={styles.small}>
-          <Text style={styles.buttonText}>Remove</Text>
+        <Pressable onPress={() => onRemove(item.code)} style={styles.quiet}>
+          <Text style={styles.quietText}>Remove</Text>
         </Pressable>
       </View>
-      <Field label="Short description" value={summary} onChangeText={setSummary} />
-      <Field
-        label="Test details"
-        value={details}
-        multiline
-        onChangeText={setDetails}
-      />
+      <View style={styles.priceLine}>
+        <Field label="Price ($)" value={price} keyboardType="decimal-pad" onChangeText={setPrice} />
+        <Pressable onPress={() => onSave(item.code, price)} style={styles.button}>
+          <Text style={styles.buttonText}>Save price</Text>
+        </Pressable>
+      </View>
+      <Field label="Short description" value={summary} multiline onChangeText={setSummary} />
+      <Field label="Test details" value={details} multiline tall onChangeText={setDetails} />
       <Text style={styles.meta}>Put a heading on its own line, then the detail text. Leave a blank line between sections.</Text>
       <Pressable
         onPress={() =>
@@ -389,106 +388,162 @@ function QuestionEditor({ questions, onSave }) {
   return (
     <View>
       {rows.map((question, index) => (
-        <View key={question.id || index} style={styles.priceRow}>
+        <View key={question.id || index} style={styles.questionRow}>
           <TextInput
             value={question.prompt}
+            multiline
             onChangeText={(prompt) => setRows(rows.map((row, rowIndex) => (rowIndex === index ? { ...row, prompt } : row)))}
-            style={[styles.input, styles.priceCopy]}
+            placeholderTextColor={colors.muted}
+            style={[styles.input, styles.grow]}
           />
-          <Pressable onPress={() => setRows(rows.filter((_, rowIndex) => rowIndex !== index))} style={styles.small}>
-            <Text style={styles.buttonText}>Remove</Text>
+          <Pressable onPress={() => setRows(rows.filter((_, rowIndex) => rowIndex !== index))} style={styles.quiet}>
+            <Text style={styles.quietText}>Remove</Text>
           </Pressable>
         </View>
       ))}
-      <Field label="New question" value={prompt} onChangeText={setPrompt} />
-      <Pressable
-        onPress={() => {
-          if (!prompt.trim()) {
-            return;
-          }
-          setRows([...rows, { id: `q${Date.now()}`, prompt: prompt.trim(), type: 'yes_no' }]);
-          setPrompt('');
-        }}
-        style={styles.button}
-      >
-        <Text style={styles.buttonText}>Add question</Text>
-      </Pressable>
-      <Pressable onPress={() => onSave(rows)} style={styles.button}>
-        <Text style={styles.buttonText}>Save questions</Text>
-      </Pressable>
+      <Field label="New question" value={prompt} placeholder="Type the question, then add it" onChangeText={setPrompt} />
+      <View style={styles.actions}>
+        <Pressable
+          onPress={() => {
+            if (!prompt.trim()) {
+              return;
+            }
+            setRows([...rows, { id: `q${Date.now()}`, prompt: prompt.trim(), type: 'yes_no' }]);
+            setPrompt('');
+          }}
+          style={styles.ghost}
+        >
+          <Text style={styles.ghostText}>Add question</Text>
+        </Pressable>
+        <Pressable onPress={() => onSave(rows)} style={styles.button}>
+          <Text style={styles.buttonText}>Save questions</Text>
+        </Pressable>
+      </View>
     </View>
   );
 }
 
-function Field({ label, ...props }) {
+function Field({ label, wide, tall, style, ...props }) {
   return (
-    <View style={styles.field}>
+    <View style={[styles.field, wide && styles.fieldWide, style]}>
       <Text style={styles.label}>{label}</Text>
-      <TextInput {...props} placeholderTextColor={colors.muted} style={styles.input} />
+      <TextInput
+        {...props}
+        multiline={tall || props.multiline}
+        placeholderTextColor={colors.muted}
+        style={[styles.input, tall && styles.inputTall, props.multiline && !tall && styles.inputShort]}
+      />
     </View>
   );
 }
 
 const styles = StyleSheet.create({
-  page: { flex: 1, backgroundColor: colors.white },
-  content: { paddingBottom: 48 },
-  body: { maxWidth: 880, width: '100%', alignSelf: 'center', padding: 24 },
+  page: { flex: 1, backgroundColor: '#F6F3F8' },
+  content: { paddingBottom: 64 },
+  body: { maxWidth: 920, width: '100%', alignSelf: 'center', paddingHorizontal: 24, paddingTop: 28 },
   title: { fontFamily: font, fontSize: 32, fontWeight: '700', color: colors.ink },
-  heading: { fontFamily: font, fontSize: 22, fontWeight: '700', color: colors.ink, marginTop: 18 },
-  tabs: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginTop: 18 },
+  heading: { fontFamily: font, fontSize: 26, fontWeight: '700', color: colors.ink, marginTop: 8 },
+  tabs: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginTop: 20 },
   tab: {
     borderWidth: 1,
     borderColor: colors.line,
     borderRadius: 999,
-    paddingHorizontal: 14,
+    paddingHorizontal: 16,
     paddingVertical: 10,
     backgroundColor: colors.white,
   },
   tabOn: { backgroundColor: colors.purple, borderColor: colors.purple },
-  tabText: { fontFamily: font, color: colors.ink, fontWeight: '700' },
+  tabText: { fontFamily: font, color: colors.ink, fontWeight: '600', fontSize: 14 },
   tabTextOn: { color: colors.white },
-  section: { marginTop: 8 },
+  section: { marginTop: 16 },
   hidden: { display: 'none' },
-  subheading: { fontFamily: font, fontSize: 16, fontWeight: '700', color: colors.ink, marginTop: 16 },
-  group: { marginTop: 8, paddingTop: 8, borderTopWidth: 1, borderTopColor: colors.line },
-  copy: { fontFamily: font, color: colors.ink, marginTop: 8, lineHeight: 22 },
-  meta: { fontFamily: font, color: colors.muted, fontSize: 12 },
-  card: { marginTop: 18, maxWidth: 420 },
-  field: { marginTop: 12 },
-  label: { fontFamily: font, fontWeight: '700', color: colors.ink },
-  input: {
-    marginTop: 6,
+  panel: {
+    marginTop: 14,
+    backgroundColor: colors.white,
     borderWidth: 1,
     borderColor: colors.line,
-    borderRadius: 10,
-    paddingHorizontal: 12,
-    paddingVertical: 10,
-    fontFamily: font,
+    borderRadius: 16,
+    padding: 20,
   },
+  panelTitle: { fontFamily: font, fontSize: 18, fontWeight: '700', color: colors.ink },
+  copy: { fontFamily: font, color: colors.muted, marginTop: 6, lineHeight: 22, fontSize: 14 },
+  meta: { fontFamily: font, color: colors.muted, fontSize: 12, marginTop: 4, lineHeight: 18 },
+  card: {
+    marginTop: 20,
+    maxWidth: 440,
+    backgroundColor: colors.white,
+    borderWidth: 1,
+    borderColor: colors.line,
+    borderRadius: 16,
+    padding: 20,
+  },
+  formGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 12, marginTop: 8 },
+  field: { marginTop: 8, minWidth: 160, flexGrow: 1, flexBasis: 180 },
+  fieldWide: { flexBasis: 320 },
+  label: { fontFamily: font, fontWeight: '600', color: colors.ink, fontSize: 13, marginBottom: 6 },
+  input: {
+    borderWidth: 1,
+    borderColor: colors.line,
+    borderRadius: 12,
+    paddingHorizontal: 14,
+    paddingVertical: 12,
+    fontFamily: font,
+    fontSize: 15,
+    color: colors.ink,
+    backgroundColor: '#FCFBFD',
+    outlineStyle: 'none',
+  },
+  inputShort: { minHeight: 72, textAlignVertical: 'top' },
+  inputTall: { minHeight: 160, textAlignVertical: 'top' },
+  actions: { flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', gap: 10, marginTop: 16 },
   button: {
     marginTop: 14,
     alignSelf: 'flex-start',
     backgroundColor: colors.purple,
-    borderRadius: 10,
+    borderRadius: 12,
+    paddingHorizontal: 18,
+    paddingVertical: 12,
+  },
+  buttonText: { fontFamily: font, color: colors.white, fontWeight: '700', fontSize: 14 },
+  ghost: {
+    marginTop: 14,
+    alignSelf: 'flex-start',
+    borderWidth: 1,
+    borderColor: colors.line,
+    backgroundColor: colors.white,
+    borderRadius: 12,
     paddingHorizontal: 16,
     paddingVertical: 12,
   },
-  small: { backgroundColor: colors.purple, borderRadius: 8, paddingHorizontal: 12, paddingVertical: 8 },
-  buttonText: { fontFamily: font, color: colors.white, fontWeight: '700' },
+  ghostText: { fontFamily: font, color: colors.ink, fontWeight: '700', fontSize: 14 },
+  quiet: { paddingHorizontal: 8, paddingVertical: 8 },
+  quietText: { fontFamily: font, color: '#8A3A3A', fontWeight: '600', fontSize: 13 },
   error: { fontFamily: font, color: '#B42318', marginTop: 10 },
-  notice: { fontFamily: font, color: colors.ink, marginTop: 12 },
-  row: { flexDirection: 'row', gap: 16, marginTop: 8 },
-  check: { paddingVertical: 8 },
-  testCard: { marginTop: 16, paddingTop: 8, borderTopWidth: 1, borderTopColor: colors.line },
-  priceRow: { flexDirection: 'row', alignItems: 'center', gap: 12, marginTop: 12 },
-  priceCopy: { flex: 1 },
-  priceInput: {
-    width: 90,
+  notice: {
+    fontFamily: font,
+    color: colors.ink,
+    marginTop: 16,
+    backgroundColor: '#EFE7F6',
+    borderRadius: 12,
+    paddingHorizontal: 14,
+    paddingVertical: 12,
+    overflow: 'hidden',
+  },
+  segment: {
+    flexDirection: 'row',
+    alignSelf: 'flex-start',
+    marginTop: 16,
     borderWidth: 1,
     borderColor: colors.line,
-    borderRadius: 8,
-    paddingHorizontal: 8,
-    paddingVertical: 8,
-    fontFamily: font,
+    borderRadius: 12,
+    overflow: 'hidden',
   },
+  segmentItem: { paddingHorizontal: 16, paddingVertical: 10, backgroundColor: colors.white },
+  segmentOn: { backgroundColor: colors.purple },
+  segmentText: { fontFamily: font, color: colors.ink, fontWeight: '600', textTransform: 'capitalize' },
+  segmentTextOn: { color: colors.white },
+  testHead: { flexDirection: 'row', alignItems: 'flex-start', justifyContent: 'space-between', gap: 12 },
+  grow: { flex: 1 },
+  priceLine: { flexDirection: 'row', flexWrap: 'wrap', alignItems: 'flex-end', gap: 12 },
+  questionRow: { flexDirection: 'row', alignItems: 'center', gap: 8, marginTop: 10 },
 });
