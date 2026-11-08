@@ -32,7 +32,6 @@ export default function App() {
 
   const home = () => setScreen({ name: 'home' });
   const about = () => setScreen({ name: 'about' });
-  const office = () => setScreen({ name: 'office' });
   const portal = () => setScreen({ name: 'portal' });
   const signOut = () => {
     forgetPatient();
@@ -63,7 +62,6 @@ export default function App() {
       {screen.name === 'home' ? (
         <HomeScreen
           onAbout={about}
-          onOffice={office}
           onPortal={portal}
           onBook={book}
           onCompanyBook={(visit) => setScreen({ name: 'visit', visit })}
@@ -78,7 +76,6 @@ export default function App() {
           visit={screen.visit}
           onHome={home}
           onAbout={about}
-          onOffice={office}
           onBook={book}
           account={account}
           onAccount={setAccount}

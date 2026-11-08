@@ -11,6 +11,7 @@ import {
   patientVisits,
 } from '../api';
 import { SiteHeader } from '../SiteHeader';
+import { checkEmail, checkName, profileProblems } from '../checks';
 import { colors, font, money } from '../theme';
 
 const TOKEN_KEY = 'reya_patient_token';
@@ -63,13 +64,14 @@ const emptyProfile = {
   pharmacy_address: '',
 };
 
-export function PatientScreen({ visit, onHome, onAbout, onOffice, onBook, account, onAccount, onSignOut }) {
+export function PatientScreen({ visit, onHome, onAbout, onBook, account, onAccount, onSignOut }) {
   const [token, setToken] = useState(patientToken);
   const [mode, setMode] = useState('signin');
   const [name, setName] = useState('');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
+  const [formError, setFormError] = useState('');
   const [profile, setProfile] = useState(emptyProfile);
   const [savedEmail, setSavedEmail] = useState('');
   const [visits, setVisits] = useState([]);
@@ -105,6 +107,22 @@ export function PatientScreen({ visit, onHome, onAbout, onOffice, onBook, accoun
 
   async function submit() {
     setError('');
+    if (mode === 'signup') {
+      const nameError = checkName(name, 'full name');
+      if (nameError) {
+        setError(nameError);
+        return;
+      }
+    }
+    const emailError = checkEmail(email);
+    if (emailError) {
+      setError(emailError);
+      return;
+    }
+    if (password.length < 8) {
+      setError('Use a password of at least 8 characters.');
+      return;
+    }
     try {
       const result = mode === 'signup' ? await patientSignup({ name, email, password }) : await patientLogin(email, password);
       rememberPatient(result);
@@ -128,6 +146,13 @@ export function PatientScreen({ visit, onHome, onAbout, onOffice, onBook, accoun
   }
 
   async function saveProfile() {
+    const problem = Object.values(profileProblems(profile)).find(Boolean);
+    if (problem) {
+      setFormError(problem);
+      setNotice('');
+      return;
+    }
+    setFormError('');
     applyPayload(await patientProfile(token, profile));
     setNotice('Saved.');
   }
@@ -148,7 +173,7 @@ export function PatientScreen({ visit, onHome, onAbout, onOffice, onBook, accoun
   }
 
   const header = (
-    <SiteHeader onHome={onHome} onAbout={onAbout} onOffice={onOffice} onPortal={() => {}} account={account} onSignOut={onSignOut} />
+    <SiteHeader onHome={onHome} onAbout={onAbout} onPortal={() => {}} account={account} onSignOut={onSignOut} />
   );
 
   if (!token) {
@@ -180,6 +205,9 @@ export function PatientScreen({ visit, onHome, onAbout, onOffice, onBook, accoun
             <Pressable onPress={submit} style={styles.button}>
               <Text style={styles.buttonText}>{mode === 'signup' ? 'Create account' : 'Sign in'}</Text>
             </Pressable>
+            <Pressable onPress={onHome} style={styles.ghost}>
+              <Text style={styles.ghostText}>Home</Text>
+            </Pressable>
           </View>
         </View>
       </ScrollView>
@@ -191,6 +219,9 @@ export function PatientScreen({ visit, onHome, onAbout, onOffice, onBook, accoun
       {header}
       <View style={styles.shell}>
         <View style={styles.nav}>
+          <Pressable onPress={onHome} style={styles.navItem}>
+            <Text style={styles.navText}>Home</Text>
+          </Pressable>
           <Text style={styles.navTitle}>Your care</Text>
           {NAV.map(([key, label]) => (
             <Pressable key={key} onPress={() => (key === 'messages' ? openMessages() : setSection(key))} style={[styles.navItem, section === key && styles.navOn]}>
@@ -205,6 +236,7 @@ export function PatientScreen({ visit, onHome, onAbout, onOffice, onBook, accoun
         </View>
         <View style={styles.main}>
           {notice ? <Text style={styles.notice}>{notice}</Text> : null}
+          {formError ? <Text style={styles.error}>{formError}</Text> : null}
           {section === 'messages' ? <Messages visits={visits} onSend={send} /> : null}
           {section === 'contact' ? (
             <ProfileCard

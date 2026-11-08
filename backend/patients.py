@@ -12,6 +12,8 @@ import time
 from datetime import datetime, timezone
 from pathlib import Path
 
+from checks import check_email, check_name, profile_errors
+
 ROOT = Path(__file__).resolve().parent / "data"
 DATA = ROOT / "patients.json"
 FILES = ROOT / "patient_files"
@@ -36,10 +38,12 @@ def signup(name: str, email: str, password: str) -> dict:
     name = " ".join(str(name or "").split())
     email = str(email or "").strip().lower()
     password = str(password or "")
-    if len(name) < 2:
-        raise PatientError("Enter your name.")
-    if "@" not in email or "." not in email.split("@")[-1]:
-        raise PatientError("Enter a valid email.")
+    name_error = check_name(name, "full name")
+    if name_error:
+        raise PatientError(name_error)
+    email_error = check_email(email)
+    if email_error:
+        raise PatientError(email_error)
     if len(password) < 8:
         raise PatientError("Use a password of at least 8 characters.")
     with LOCK:
@@ -154,6 +158,9 @@ def visits_for_patient(token: str) -> dict:
 
 def update_profile(token: str, fields: dict) -> dict:
     account = account_from_token(token)
+    problems = profile_errors(fields)
+    if problems:
+        raise PatientError(problems[0])
     allowed = {"phone", "address", "city", "state", "zip", "dob", "pharmacy_name", "pharmacy_phone", "pharmacy_address"}
     with LOCK:
         data = _load()

@@ -11,6 +11,7 @@ from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
 
 from catalog import IMAGING_QUESTIONNAIRES, IMAGING_TESTS, LAB_QUESTIONNAIRES, LAB_TESTS, SHARED_QUESTIONS, questionnaires_for
+from checks import booking_info_errors
 from portal_store import (
     add_test,
     businesses_for_kind,
@@ -567,6 +568,9 @@ def create_booking(booking: BookingRequest):
     if office and office.get("kind") == "imaging" and booking.labs:
         raise HTTPException(status_code=400, detail="This visit belongs to one business. Remove lab tests.")
     payload = booking.model_dump()
+    info_errors = booking_info_errors(payload.get("info") or {})
+    if info_errors:
+        raise HTTPException(status_code=400, detail=info_errors[0])
     patient_token = payload.pop("patient_token", "")
     try:
         order = prepare_order(payload)

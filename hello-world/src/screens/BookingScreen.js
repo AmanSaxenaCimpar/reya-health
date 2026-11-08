@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 import { API_URL, loadImaging, loadLabs, loadQuestionnaires, loadQuote, saveBooking } from '../api';
+import { patientInfoProblems } from '../checks';
 import { patientToken } from './PatientScreen';
 import { SiteHeader } from '../SiteHeader';
 import { colors, font, money } from '../theme';
@@ -267,6 +268,8 @@ export function BookingScreen({ visit, onHome, onAbout, onBack, account, onPorta
     }));
   }
 
+  const infoProblems = patientInfoProblems(info);
+  const infoReady = Object.values(infoProblems).every((item) => !item);
   const canContinue = {
     order: order === 'no' || (order === 'yes' && orderFile?.content),
     choose: services.length > 0,
@@ -274,7 +277,7 @@ export function BookingScreen({ visit, onHome, onAbout, onBack, account, onPorta
     imaging: imagingPicked.length > 0,
     questions: questionsDone,
     schedule: Boolean(date && time),
-    info: info.first && info.last && info.dob && info.gender && info.relationship && info.phone && info.email,
+    info: infoReady,
     general: generalDone && !urgentHit,
     payment: true,
   }[stepKey];
@@ -508,11 +511,12 @@ export function BookingScreen({ visit, onHome, onAbout, onBack, account, onPorta
       {stepKey === 'info' ? (
         <View>
           <Text style={styles.title}>Your information</Text>
+          <Text style={styles.copy}>Patients must be 18 or older. Use a real email and a 10-digit phone number.</Text>
           <View style={styles.row}>
-            <Field label="Patient first name" value={info.first} onChangeText={(first) => setInfo({ ...info, first })} />
-            <Field label="Patient last name" value={info.last} onChangeText={(last) => setInfo({ ...info, last })} />
+            <Field label="Patient first name" value={info.first} error={info.first ? infoProblems.first : ''} onChangeText={(first) => setInfo({ ...info, first })} />
+            <Field label="Patient last name" value={info.last} error={info.last ? infoProblems.last : ''} onChangeText={(last) => setInfo({ ...info, last })} />
           </View>
-          <Field label="Date of birth" value={info.dob} placeholder="mm/dd/yyyy" onChangeText={(dob) => setInfo({ ...info, dob })} />
+          <Field label="Date of birth" value={info.dob} placeholder="mm/dd/yyyy" error={info.dob ? infoProblems.dob : ''} onChangeText={(dob) => setInfo({ ...info, dob })} />
           <Text style={styles.label}>Gender</Text>
           <View style={styles.row}>
             {['Male', 'Female'].map((item) => (
@@ -536,10 +540,14 @@ export function BookingScreen({ visit, onHome, onAbout, onBack, account, onPorta
           <Field
             label="Preferred first name"
             value={info.preferred}
+            error={info.preferred ? infoProblems.preferred : ''}
             onChangeText={(preferred) => setInfo({ ...info, preferred })}
           />
-          <Field label="Phone" value={info.phone} placeholder="(312) 555-0100" onChangeText={(phone) => setInfo({ ...info, phone })} />
-          <Field label="Email" value={info.email} placeholder="you@email.com" onChangeText={(email) => setInfo({ ...info, email })} />
+          <Field label="Phone" value={info.phone} placeholder="(312) 555-0100" error={info.phone ? infoProblems.phone : ''} onChangeText={(phone) => setInfo({ ...info, phone })} />
+          <Field label="Email" value={info.email} placeholder="name@email.com" autoCapitalize="none" error={info.email ? infoProblems.email : ''} onChangeText={(email) => setInfo({ ...info, email })} />
+          {!infoReady && (info.first || info.last || info.dob || info.phone || info.email) ? (
+            <Text style={styles.error}>{Object.values(infoProblems).find(Boolean)}</Text>
+          ) : null}
         </View>
       ) : null}
 
@@ -953,11 +961,12 @@ function Catalog({ title, items, picked, onToggle }) {
   );
 }
 
-function Field({ label, ...props }) {
+function Field({ label, error, ...props }) {
   return (
     <View style={styles.field}>
       <Text style={styles.label}>{label}</Text>
       <TextInput placeholderTextColor={colors.muted} style={styles.input} {...props} />
+      {error ? <Text style={styles.error}>{error}</Text> : null}
     </View>
   );
 }
