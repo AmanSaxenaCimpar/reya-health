@@ -5,6 +5,8 @@ import {
   patientDocument,
   patientLogin,
   patientMessage,
+  patientResend,
+  patientVerify,
   patientProfile,
   patientRead,
   patientSignup,
@@ -71,6 +73,9 @@ export function PatientScreen({ visit, onHome, onAbout, onBook, account, onAccou
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
+  const [pendingEmail, setPendingEmail] = useState('');
+  const [previewLink, setPreviewLink] = useState('');
+  const [confirmed, setConfirmed] = useState(false);
   const [formError, setFormError] = useState('');
   const [profile, setProfile] = useState(emptyProfile);
   const [savedEmail, setSavedEmail] = useState('');
@@ -78,6 +83,20 @@ export function PatientScreen({ visit, onHome, onAbout, onBook, account, onAccou
   const [section, setSection] = useState('orders');
   const [unread, setUnread] = useState(0);
   const [notice, setNotice] = useState('');
+
+  useEffect(() => {
+    const code = new URLSearchParams(window.location.search).get('verify');
+    if (!code) {
+      return;
+    }
+    patientVerify(code)
+      .then(() => {
+        setConfirmed(true);
+        setMode('signin');
+        window.history.replaceState({}, '', window.location.pathname);
+      })
+      .catch((err) => setError(err.message));
+  }, []);
 
   useEffect(() => {
     if (!token) {
@@ -124,7 +143,14 @@ export function PatientScreen({ visit, onHome, onAbout, onBook, account, onAccou
       return;
     }
     try {
-      const result = mode === 'signup' ? await patientSignup({ name, email, password }) : await patientLogin(email, password);
+      if (mode === 'signup') {
+        const result = await patientSignup({ name, email, password });
+        setPendingEmail(email.trim());
+        setPreviewLink(result.preview_link || '');
+        setPassword('');
+        return;
+      }
+      const result = await patientLogin(email, password);
       rememberPatient(result);
       onAccount({ name: result.name, email: result.email });
       setToken(result.token);
@@ -182,29 +208,64 @@ export function PatientScreen({ visit, onHome, onAbout, onBook, account, onAccou
         {header}
         <View style={styles.authWrap}>
           <View style={styles.authCard}>
-            <Text style={styles.title}>{mode === 'signup' ? 'Create your account' : 'Sign in'}</Text>
+            <Text style={styles.title}>{pendingEmail ? 'Confirm your email' : mode === 'signup' ? 'Create your account' : 'Sign in'}</Text>
             <Text style={styles.copy}>
-              {visit
-                ? 'Sign in to continue this booking. Your name stays on the screen while you book.'
-                : 'Your orders, results, messages, and pharmacy details live here.'}
+              {confirmed
+                ? 'Your email is confirmed. Sign in to open the portal.'
+                : pendingEmail
+                  ? `Open the confirmation link sent to ${pendingEmail}. The portal stays closed until that email is confirmed.`
+                  : visit
+                    ? 'Sign in to continue this booking. Your name stays on the screen while you book.'
+                    : 'Your orders, results, messages, and pharmacy details live here.'}
             </Text>
-            <View style={styles.segment}>
-              {[
-                ['signin', 'Sign in'],
-                ['signup', 'Sign up'],
-              ].map(([key, label]) => (
-                <Pressable key={key} onPress={() => setMode(key)} style={[styles.segmentItem, mode === key && styles.segmentOn]}>
-                  <Text style={[styles.segmentText, mode === key && styles.segmentTextOn]}>{label}</Text>
+            {pendingEmail ? (
+              <View>
+                {previewLink ? (
+                  <Text style={styles.copy}>
+                    Mail is not connected on this server yet, so the link is shown here. Once mail is connected, this link is only emailed.
+                  </Text>
+                ) : null}
+                {previewLink ? (
+                  <Pressable onPress={() => window.location.assign(previewLink)} style={styles.button}>
+                    <Text style={styles.buttonText}>Open confirmation link</Text>
+                  </Pressable>
+                ) : null}
+                <Pressable
+                  onPress={async () => {
+                    const result = await patientResend(pendingEmail);
+                    setPreviewLink(result.preview_link || '');
+                    setError('');
+                  }}
+                  style={styles.ghost}
+                >
+                  <Text style={styles.ghostText}>Send the email again</Text>
                 </Pressable>
-              ))}
-            </View>
-            {mode === 'signup' ? <Field label="Full name" value={name} onChangeText={setName} /> : null}
-            <Field label="Email" value={email} autoCapitalize="none" onChangeText={setEmail} />
-            <Field label="Password" value={password} secureTextEntry placeholder="At least 8 characters" onChangeText={setPassword} />
+                <Pressable onPress={() => { setPendingEmail(''); setMode('signin'); }} style={styles.ghost}>
+                  <Text style={styles.ghostText}>Back to sign in</Text>
+                </Pressable>
+              </View>
+            ) : null}
+            {!pendingEmail ? (
+              <View>
+                <View style={styles.segment}>
+                  {[
+                    ['signin', 'Sign in'],
+                    ['signup', 'Sign up'],
+                  ].map(([key, label]) => (
+                    <Pressable key={key} onPress={() => setMode(key)} style={[styles.segmentItem, mode === key && styles.segmentOn]}>
+                      <Text style={[styles.segmentText, mode === key && styles.segmentTextOn]}>{label}</Text>
+                    </Pressable>
+                  ))}
+                </View>
+                {mode === 'signup' ? <Field label="Full name" value={name} onChangeText={setName} /> : null}
+                <Field label="Email" value={email} autoCapitalize="none" onChangeText={setEmail} />
+                <Field label="Password" value={password} secureTextEntry placeholder="At least 8 characters" onChangeText={setPassword} />
+                <Pressable onPress={submit} style={styles.button}>
+                  <Text style={styles.buttonText}>{mode === 'signup' ? 'Create account' : 'Sign in'}</Text>
+                </Pressable>
+              </View>
+            ) : null}
             {error ? <Text style={styles.error}>{error}</Text> : null}
-            <Pressable onPress={submit} style={styles.button}>
-              <Text style={styles.buttonText}>{mode === 'signup' ? 'Create account' : 'Sign in'}</Text>
-            </Pressable>
             <Pressable onPress={onHome} style={styles.ghost}>
               <Text style={styles.ghostText}>Home</Text>
             </Pressable>

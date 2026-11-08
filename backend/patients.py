@@ -65,12 +65,17 @@ def signup(name: str, email: str, password: str) -> dict:
             "pharmacy_address": "",
             "salt": secrets.token_hex(16),
             "password_hash": "",
+            "verified": False,
+            "verify_hash": "",
+            "verify_expires": 0,
             "created": _now(),
         }
         account["password_hash"] = _hash(password, account["salt"])
+        raw = _new_verify_token(account)
         data["accounts"].append(account)
         _save(data)
-    return _public_account(account)
+    sent = _send_verification(account, raw)
+    return {"email": account["email"], "verified": False, "email_sent": sent, "preview_link": "" if sent else _verify_link(raw)}
 
 
 def login(email: str, password: str) -> dict:
@@ -80,7 +85,38 @@ def login(email: str, password: str) -> dict:
     account = next((row for row in data["accounts"] if row["email"] == email), None)
     if account is None or not hmac.compare_digest(_hash(password, account["salt"]), account["password_hash"]):
         raise PatientError("That email or password is not recognized.")
+    if not account.get("verified", True):
+        raise PatientError("Confirm your email before signing in. Open the link we sent, then try again.")
     return _public_account(account)
+
+
+def confirm_email(token: str) -> dict:
+    digest = hashlib.sha256(str(token or "").encode()).hexdigest()
+    with LOCK:
+        data = _load()
+        account = next((row for row in data["accounts"] if row.get("verify_hash") == digest), None)
+        if account is None:
+            raise PatientError("That confirmation link is not valid.")
+        if int(account.get("verify_expires") or 0) < time.time():
+            raise PatientError("That confirmation link has expired. Request a new one.")
+        account["verified"] = True
+        account["verify_hash"] = ""
+        account["verify_expires"] = 0
+        _save(data)
+    return {"email": account["email"], "verified": True}
+
+
+def resend_verification(email: str) -> dict:
+    email = str(email or "").strip().lower()
+    with LOCK:
+        data = _load()
+        account = next((row for row in data["accounts"] if row["email"] == email), None)
+        if account is None or account.get("verified", True):
+            return {"email_sent": True, "preview_link": ""}
+        raw = _new_verify_token(account)
+        _save(data)
+    sent = _send_verification(account, raw)
+    return {"email_sent": sent, "preview_link": "" if sent else _verify_link(raw)}
 
 
 def token_for(account_id: str) -> str:
@@ -350,6 +386,46 @@ def _public_visit(visit: dict) -> dict:
 def _hash(password: str, salt: str) -> str:
     digest = hashlib.pbkdf2_hmac("sha256", password.encode(), salt.encode(), 120_000)
     return digest.hex()
+
+
+def _new_verify_token(account: dict) -> str:
+    raw = secrets.token_urlsafe(32)
+    account["verify_hash"] = hashlib.sha256(raw.encode()).hexdigest()
+    account["verify_expires"] = int(time.time()) + 60 * 60 * 24
+    return raw
+
+
+def _verify_link(token: str) -> str:
+    base = os.environ.get("PUBLIC_APP_URL", "https://reya-health.onrender.com").strip().rstrip("/")
+    return f"{base}/?verify={token}"
+
+
+def _send_verification(account: dict, token: str) -> bool:
+    host = os.environ.get("SMTP_HOST", "").strip()
+    if not host:
+        return False
+    import smtplib
+    from email.message import EmailMessage
+
+    message = EmailMessage()
+    message["Subject"] = "Confirm your Reya Health email"
+    message["From"] = os.environ.get("SMTP_FROM", "noreply@reyahealth.com")
+    message["To"] = account["email"]
+    message.set_content(
+        f"Hello {account.get('name') or account['email']},\n\n"
+        "Confirm this email before signing in to the Reya Health patient portal.\n\n"
+        f"{_verify_link(token)}\n\n"
+        "This link expires in 24 hours. If you did not create an account, you can ignore this message.\n"
+    )
+    try:
+        with smtplib.SMTP(host, int(os.environ.get("SMTP_PORT", "587"))) as smtp:
+            if os.environ.get("SMTP_USER"):
+                smtp.starttls()
+                smtp.login(os.environ["SMTP_USER"], os.environ.get("SMTP_PASSWORD", ""))
+            smtp.send_message(message)
+    except Exception:
+        return False
+    return True
 
 
 def _secret() -> str:

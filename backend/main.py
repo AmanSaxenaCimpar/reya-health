@@ -45,7 +45,9 @@ from patients import (
     add_office_result,
     mark_messages_read,
     update_profile,
+    confirm_email,
     login as patient_login,
+    resend_verification,
     read_document,
     record_visit,
     signup as patient_signup,
@@ -641,10 +643,25 @@ def require_patient(token: str) -> dict:
 @app.post("/patient/signup")
 def patient_signup_route(body: PatientAccount):
     try:
-        account = patient_signup(body.name, body.email, body.password)
+        return patient_signup(body.name, body.email, body.password)
     except PatientError as error:
         raise HTTPException(status_code=400, detail=str(error)) from None
-    return {**account, "token": token_for(account["id"])}
+
+
+@app.post("/patient/verify")
+def patient_verify_route(body: PatientAccount):
+    try:
+        return confirm_email(body.password)
+    except PatientError as error:
+        raise HTTPException(status_code=400, detail=str(error)) from None
+
+
+@app.post("/patient/verify/resend")
+def patient_verify_resend(body: PatientAccount):
+    try:
+        return resend_verification(body.email)
+    except PatientError as error:
+        raise HTTPException(status_code=400, detail=str(error)) from None
 
 
 @app.post("/patient/login")

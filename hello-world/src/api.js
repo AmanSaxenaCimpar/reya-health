@@ -185,6 +185,34 @@ export async function patientSignup(account) {
   return payload;
 }
 
+export function patientVerify(token) {
+  return fetch(`${API_URL}/patient/verify`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ password: token }),
+  }).then(async (response) => {
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      throw new Error(typeof payload.detail === 'string' ? payload.detail : 'That confirmation link is not valid.');
+    }
+    return payload;
+  });
+}
+
+export function patientResend(email) {
+  return fetch(`${API_URL}/patient/verify/resend`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ email }),
+  }).then(async (response) => {
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      throw new Error(typeof payload.detail === 'string' ? payload.detail : 'Could not send a new confirmation email.');
+    }
+    return payload;
+  });
+}
+
 export async function patientLogin(email, password) {
   const response = await fetch(`${API_URL}/patient/login`, {
     method: 'POST',
