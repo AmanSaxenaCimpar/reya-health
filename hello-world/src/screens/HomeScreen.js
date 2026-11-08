@@ -5,7 +5,7 @@ import { HEALTHIE_EMBED_URL } from '../BookingFrame';
 import { AREA_LABEL, checkCoverage, locateZip } from '../coverage';
 import { Icon } from '../icons';
 import { SiteHeader } from '../SiteHeader';
-import { colors, font, money, serviceLabels } from '../theme';
+import { colors, font, serviceLabels } from '../theme';
 
 const offeredServices = [
   {
@@ -262,13 +262,7 @@ export function HomeScreen({ onAbout, onOffice, onBook, onCompanyBook }) {
           {place === 'home' && result?.served ? (
             <View style={styles.answer}>
               <Text style={styles.answerTitle}>Yes. Care is available for this address.</Text>
-              <Text style={styles.copy}>
-                ZIP {result.zip}
-                {result.miles != null ? ` is ${result.miles} miles away.` : ' is inside the current range.'}{' '}
-                {result.travel_total != null
-                  ? `Transportation ${money(result.transport_fee)} plus distance fee ${money(result.extra)}.`
-                  : ''}
-              </Text>
+              <Text style={styles.copy}>ZIP {result.zip} is inside the current range.</Text>
               <Text style={styles.listTitle}>
                 Registered companies that offer {serviceLabels[intent]}
               </Text>
@@ -282,11 +276,6 @@ export function HomeScreen({ onAbout, onOffice, onBook, onCompanyBook }) {
                       </Text>
                     ))}
                   </View>
-                  {company.travel_total != null ? (
-                    <Text style={styles.copy}>
-                      Transportation {money(company.transport_fee)} plus distance fee {money(company.extra)}.
-                    </Text>
-                  ) : null}
                   <View style={styles.clickToBook}>
                     <Text style={styles.clickToBookText}>Click to book</Text>
                   </View>

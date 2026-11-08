@@ -431,7 +431,7 @@ export function BookingScreen({ visit, onHome, onAbout, onBack }) {
           items={imaging.map((item) => ({
             code: item.code,
             name: item.name,
-            detail: `${item.topic || item.category} · CPT ${item.cpt} · setup ${money(item.setup_fee)}`,
+            detail: `${item.topic || item.category} · CPT ${item.cpt}`,
             summary: item.summary,
             sections: item.sections || [],
             price: item.price,
@@ -565,10 +565,6 @@ export function BookingScreen({ visit, onHome, onAbout, onBack }) {
           date={date}
           time={time}
           info={info}
-          serviceFee={serviceFee}
-          setupTotal={setupTotal}
-          travelFee={travelFee}
-          quote={quote}
           serviceName={services.includes('imaging') ? 'Imaging' : 'Lab'}
           total={total}
           holdStarted={holdStarted}
@@ -627,10 +623,6 @@ function ReviewDetails({
   date,
   time,
   info,
-  serviceFee,
-  setupTotal,
-  travelFee,
-  quote,
   serviceName,
   total,
   holdStarted,
@@ -674,17 +666,6 @@ function ReviewDetails({
         <ReviewRow label="Address" value={visit.address || visit.zip} />
       </ReviewSection>
       <View style={styles.feeBox}>
-        <ReviewRow label="Service fee" value={money(serviceFee)} />
-        {setupTotal > 0 ? <ReviewRow label="Setup fee" value={money(setupTotal)} /> : null}
-        <ReviewRow label="Transportation fee" value={money(quote?.transport_fee || 0)} />
-        <ReviewRow
-          label="Distance fee"
-          value={
-            quote?.miles == null
-              ? 'Calculated from the ZIP'
-              : `${quote.miles} miles (${quote.from_miles}–${quote.to_miles}) · ${money(quote.extra || 0)}`
-          }
-        />
         <Text style={styles.answer}>Total {money(total)}</Text>
       </View>
       {saveError ? <Text style={styles.error}>{saveError}</Text> : null}
