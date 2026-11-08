@@ -246,6 +246,32 @@ export function patientRead(token) {
   return patientFetch('/patient/messages/read', token, { method: 'POST', body: '{}' });
 }
 
+export async function patientFinishLink(email, name) {
+  const response = await fetch(`${API_URL}/patient/finish-link`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ email, name }),
+  });
+  const payload = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    throw new Error(typeof payload.detail === 'string' ? payload.detail : 'Could not send the account link.');
+  }
+  return payload;
+}
+
+export async function createPaymentIntent(amount) {
+  const response = await fetch(`${API_URL}/payments/intent`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ amount }),
+  });
+  const payload = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    throw new Error(typeof payload.detail === 'string' ? payload.detail : 'Card payment could not be started.');
+  }
+  return payload;
+}
+
 export function officeNote(token, visitId, body) {
   return officeFetch('/office/notes', token, { method: 'POST', body: JSON.stringify({ visit_id: visitId, body }) });
 }

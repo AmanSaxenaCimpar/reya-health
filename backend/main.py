@@ -35,6 +35,8 @@ from portal_store import (
     set_price,
 )
 from orders import OrderError, prepare_order, read_order
+from payments import configured as stripe_configured
+from payments import create_intent as create_payment_intent
 from patients import (
     PatientError,
     account_from_token,
@@ -48,6 +50,7 @@ from patients import (
     confirm_email,
     login as patient_login,
     resend_verification,
+    send_finish_link,
     read_document,
     record_visit,
     signup as patient_signup,
@@ -558,6 +561,7 @@ class BookingRequest(BaseModel):
     service_fee: float = 0
     setup_fee: float = 0
     total: float = 0
+    payment_method: str = ""
 
 
 @app.post("/bookings")
@@ -573,6 +577,13 @@ def create_booking(booking: BookingRequest):
     info_errors = booking_info_errors(payload.get("info") or {})
     if info_errors:
         raise HTTPException(status_code=400, detail=info_errors[0])
+    method = str(payload.get("payment_method") or "").strip().lower()
+    if method not in {"self_pay", "prepaid"}:
+        raise HTTPException(
+            status_code=400,
+            detail="Choose a self-pay or pre-paid visit. Insurance billing is not available.",
+        )
+    payload["payment_method"] = method
     patient_token = payload.pop("patient_token", "")
     try:
         order = prepare_order(payload)
@@ -640,6 +651,29 @@ def require_patient(token: str) -> dict:
         raise HTTPException(status_code=401, detail=str(error)) from None
 
 
+class PaymentIntentBody(BaseModel):
+    amount: float = 0
+
+
+@app.post("/payments/intent")
+def payment_intent(body: PaymentIntentBody):
+    amount = round(float(body.amount or 0), 2)
+    if amount <= 0:
+        raise HTTPException(status_code=400, detail="This visit does not have an amount to pay.")
+    if not stripe_configured():
+        return {"configured": False, "amount": amount}
+    cents = int(round(amount * 100))
+    if cents < 50:
+        raise HTTPException(status_code=400, detail="Card payment needs a total of at least $0.50.")
+    try:
+        created = create_payment_intent(cents)
+    except Exception:
+        raise HTTPException(status_code=502, detail="Card payment could not be started.") from None
+    if not created.get("client_secret"):
+        raise HTTPException(status_code=502, detail="Card payment could not be started.")
+    return {"configured": True, "amount": amount, **created}
+
+
 @app.post("/patient/signup")
 def patient_signup_route(body: PatientAccount):
     try:
@@ -652,6 +686,14 @@ def patient_signup_route(body: PatientAccount):
 def patient_verify_route(body: PatientAccount):
     try:
         return confirm_email(body.password)
+    except PatientError as error:
+        raise HTTPException(status_code=400, detail=str(error)) from None
+
+
+@app.post("/patient/finish-link")
+def patient_finish_link(body: PatientAccount):
+    try:
+        return send_finish_link(body.email, body.name)
     except PatientError as error:
         raise HTTPException(status_code=400, detail=str(error)) from None
 

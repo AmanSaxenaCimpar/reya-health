@@ -1,10 +1,16 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
-import { API_URL, loadImaging, loadLabs, loadQuestionnaires, loadQuote, saveBooking } from '../api';
+import { API_URL, createPaymentIntent, loadImaging, loadLabs, loadQuestionnaires, loadQuote, saveBooking } from '../api';
 import { patientInfoProblems } from '../checks';
-import { patientToken } from './PatientScreen';
+import { AccountPrompt, patientToken, rememberPatient } from './PatientScreen';
 import { SiteHeader } from '../SiteHeader';
 import { colors, font, money } from '../theme';
+
+const AGREEMENT_COPY =
+  'This booking is for adults 18 and older. Reya books self-pay visits only. We do not submit this visit to insurance, and it cannot be used for an insurance claim. Confirming the appointment means you agree to schedule the visit on those terms.';
+
+const PRIVACY_COPY =
+  'Reya uses the name, date of birth, phone, email, and visit details you enter to schedule this self-pay visit and to prepare the order. This demo does not sell that information. Insurance claim details are not collected, because this visit cannot be billed to insurance.';
 
 function formatDate(date) {
   return date.toLocaleDateString('en-US', {
@@ -108,7 +114,7 @@ function answered(question, answers) {
   return Boolean(value);
 }
 
-export function BookingScreen({ visit, onHome, onAbout, onBack, account, onPortal, onSignOut }) {
+export function BookingScreen({ visit, onHome, onAbout, onBack, account, onAccount, onPortal, onSignOut }) {
   const [labs, setLabs] = useState([]);
   const [imaging, setImaging] = useState([]);
   const [sections, setSections] = useState([]);
@@ -142,6 +148,13 @@ export function BookingScreen({ visit, onHome, onAbout, onBack, account, onPorta
   const [orderLink, setOrderLink] = useState('');
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState('');
+  const [payChoice, setPayChoice] = useState('');
+  const [payScreen, setPayScreen] = useState('');
+  const [cardCharged, setCardCharged] = useState(false);
+  const [bookedMethod, setBookedMethod] = useState('');
+  const [attached, setAttached] = useState(false);
+  const [legalDoc, setLegalDoc] = useState('');
+  const [declineAsk, setDeclineAsk] = useState(false);
 
   useEffect(() => {
     if (stepKey === 'payment' && !holdStarted) {
@@ -212,7 +225,7 @@ export function BookingScreen({ visit, onHome, onAbout, onBack, account, onPorta
   if (services.includes('lab') || services.includes('imaging')) {
     steps.push('questions');
   }
-  steps.push('schedule', 'info', 'general', 'payment');
+  steps.push('schedule', 'info', 'general', 'payment', 'pay');
 
   const index = Math.max(steps.indexOf(stepKey), 0);
   const selectedLabs = services.includes('lab') ? labs.filter((item) => labPicked.includes(item.code)) : [];
@@ -280,9 +293,10 @@ export function BookingScreen({ visit, onHome, onAbout, onBack, account, onPorta
     info: infoReady,
     general: generalDone && !urgentHit,
     payment: true,
+    pay: payChoice === 'self_pay' || payChoice === 'prepaid',
   }[stepKey];
 
-  function confirmVisit() {
+  function confirmVisit(method, charged) {
     setSaving(true);
     setSaveError('');
     if (labPicked.length && imagingPicked.length) {
@@ -316,14 +330,23 @@ export function BookingScreen({ visit, onHome, onAbout, onBack, account, onPorta
       service_fee: serviceFee,
       setup_fee: setupTotal,
       total,
+      payment_method: method,
     }, patientToken())
       .then((result) => {
+        setBookedMethod(method);
+        setCardCharged(Boolean(charged));
+        setAttached(Boolean(patientToken()));
         setStored(Boolean(result.saved));
         setOrderLink(result.order_id ? `${API_URL}/orders/${result.order_id}` : '');
         setDone(true);
       })
       .catch((error) => {
-        setSaveError(error.message || 'Could not save this visit to SharePoint.');
+        const message = error.message || 'Could not save this visit to SharePoint.';
+        setSaveError(
+          charged
+            ? `${message} The card payment completed, but the visit was not saved. Do not pay again.`
+            : message
+        );
       })
       .finally(() => setSaving(false));
   }
@@ -341,10 +364,27 @@ export function BookingScreen({ visit, onHome, onAbout, onBack, account, onPorta
         </Text>
         <Text style={styles.copy}>
           Total {money(total)}. Your order is saved with this visit.{' '}
+          {bookedMethod === 'prepaid'
+            ? 'This visit is recorded as pre-paid. No card was charged. '
+            : cardCharged
+              ? `Card payment of ${money(total)} was received. `
+              : 'No card was charged. '}
           {stored
             ? 'The visit and the order were sent to SharePoint.'
             : 'Power Automate is not connected yet, so this visit was not stored in SharePoint.'}
         </Text>
+        {attached ? (
+          <Text style={styles.copy}>This visit is saved on {account?.name || 'your'} account.</Text>
+        ) : (
+          <AccountPrompt
+            email={info.email}
+            suggestedName={[info.first, info.last].filter(Boolean).join(' ')}
+            onSignedIn={(result) => {
+              rememberPatient(result);
+              onAccount?.({ name: result.name, email: result.email });
+            }}
+          />
+        )}
         {orderLink ? (
           <Pressable onPress={() => window.open(orderLink, '_blank', 'noopener')} style={styles.outline}>
             <Text style={styles.outlineText}>Open your order</Text>
@@ -359,7 +399,51 @@ export function BookingScreen({ visit, onHome, onAbout, onBack, account, onPorta
     );
   }
 
+  if (payScreen === 'declined') {
+    return (
+      <Page onHome={onHome} onAbout={onAbout} account={account} onPortal={onPortal} onSignOut={onSignOut}>
+        <Text style={styles.title}>We are sorry</Text>
+        <Text style={styles.copy}>We cannot complete this visit without the agreement.</Text>
+        <Pressable onPress={onHome} style={styles.confirmPill}>
+          <Text style={styles.confirmPillText}>Back to Home</Text>
+        </Pressable>
+      </Page>
+    );
+  }
+
+  if (payScreen === 'stripe') {
+    return (
+      <Page onHome={onHome} onAbout={onAbout} account={account} onPortal={onPortal} onSignOut={onSignOut}>
+        <StripeStep
+          total={total}
+          saving={saving}
+          saveError={saveError}
+          onBack={() => {
+            setPayScreen('');
+            setSaveError('');
+          }}
+          onPaid={() => confirmVisit('self_pay', true)}
+          onSkipCharge={() => confirmVisit('self_pay', false)}
+        />
+      </Page>
+    );
+  }
+
+  function submitPay() {
+    if (payChoice !== 'self_pay' && payChoice !== 'prepaid') {
+      setSaveError('Choose how this visit will be paid for.');
+      return;
+    }
+    setSaveError('');
+    if (payChoice === 'prepaid') {
+      confirmVisit('prepaid', false);
+      return;
+    }
+    setPayScreen('stripe');
+  }
+
   return (
+    <View style={styles.screen}>
     <Page onHome={onHome} onAbout={onAbout} account={account} onPortal={onPortal} onSignOut={onSignOut}>
       <Pressable onPress={back} style={styles.backButton}>
         <Text style={styles.back}>← Back</Text>
@@ -593,6 +677,28 @@ export function BookingScreen({ visit, onHome, onAbout, onBack, account, onPorta
         />
       ) : null}
 
+      {stepKey === 'pay' ? (
+        <PayStep
+          email={info.email}
+          choice={payChoice}
+          saving={saving}
+          saveError={saveError}
+          onChoice={(value) => {
+            setPayChoice(value);
+            setSaveError('');
+          }}
+          onEdit={() => go('info')}
+          onLegal={setLegalDoc}
+          onDecline={() => setDeclineAsk(true)}
+          onConfirm={submitPay}
+          onCancel={() => {
+            setSaveError('');
+            go('payment');
+          }}
+        />
+      ) : null}
+
+      {stepKey === 'pay' ? null : (
       <View style={styles.navRow}>
         <Pressable onPress={back} style={styles.backOutline}>
           <Text style={styles.backOutlineText}>← Back</Text>
@@ -602,10 +708,8 @@ export function BookingScreen({ visit, onHome, onAbout, onBack, account, onPorta
             <Text style={styles.continueOffText}>Saving to SharePoint…</Text>
           </View>
         ) : canContinue ? (
-          <Pressable onPress={stepKey === 'payment' ? confirmVisit : next} style={styles.continue}>
-            <Text style={styles.continueText}>
-              {stepKey === 'payment' ? `Confirm visit ${money(total)}` : 'Continue →'}
-            </Text>
+          <Pressable onPress={next} style={styles.continue}>
+            <Text style={styles.continueText}>Continue →</Text>
           </Pressable>
         ) : (
           <View style={styles.continueOff}>
@@ -613,7 +717,232 @@ export function BookingScreen({ visit, onHome, onAbout, onBack, account, onPorta
           </View>
         )}
       </View>
+      )}
     </Page>
+    {declineAsk ? (
+      <View style={styles.overlay}>
+        <View style={styles.dialog}>
+          <Text style={styles.dialogTitle}>Are you sure?</Text>
+          <Text style={styles.copy}>If you decline the agreement, we cannot complete this visit.</Text>
+          <Pressable
+            onPress={() => {
+              setDeclineAsk(false);
+              setPayScreen('declined');
+            }}
+            style={styles.confirmPill}
+          >
+            <Text style={styles.confirmPillText}>Yes, I decline</Text>
+          </Pressable>
+          <Pressable onPress={() => setDeclineAsk(false)} style={styles.cancelPill}>
+            <Text style={styles.cancelPillText}>Go back</Text>
+          </Pressable>
+        </View>
+      </View>
+    ) : null}
+    {legalDoc ? (
+      <View style={styles.overlay}>
+        <View style={styles.dialog}>
+          <Text style={styles.dialogTitle}>
+            {legalDoc === 'privacy' ? 'Privacy Policy' : 'Online Services User Agreement'}
+          </Text>
+          <Text style={styles.copy}>{legalDoc === 'privacy' ? PRIVACY_COPY : AGREEMENT_COPY}</Text>
+          <Pressable onPress={() => setLegalDoc('')} style={styles.confirmPill}>
+            <Text style={styles.confirmPillText}>Close</Text>
+          </Pressable>
+        </View>
+      </View>
+    ) : null}
+    </View>
+  );
+}
+
+function loadStripeJs() {
+  if (typeof window === 'undefined' || typeof document === 'undefined') {
+    return Promise.reject(new Error('Card payment is only available in the browser.'));
+  }
+  if (window.Stripe) {
+    return Promise.resolve();
+  }
+  return new Promise((resolve, reject) => {
+    const existing = document.querySelector('script[data-reya-stripe]');
+    if (existing) {
+      existing.addEventListener('load', () => resolve());
+      existing.addEventListener('error', () => reject(new Error('Card payment could not be loaded.')));
+      return;
+    }
+    const script = document.createElement('script');
+    script.src = 'https://js.stripe.com/v3/';
+    script.async = true;
+    script.dataset.reyaStripe = '1';
+    script.onload = () => resolve();
+    script.onerror = () => reject(new Error('Card payment could not be loaded.'));
+    document.head.appendChild(script);
+  });
+}
+
+function StripeStep({ total, saving, saveError, onBack, onPaid, onSkipCharge }) {
+  const [state, setState] = useState('loading');
+  const [error, setError] = useState('');
+  const stripeRef = useRef(null);
+  const elementsRef = useRef(null);
+
+  useEffect(() => {
+    let cancel = false;
+    createPaymentIntent(total)
+      .then(async (payload) => {
+        if (cancel) {
+          return;
+        }
+        if (!payload.configured) {
+          setState('offline');
+          return;
+        }
+        await loadStripeJs();
+        if (cancel || !window.Stripe) {
+          return;
+        }
+        const stripe = window.Stripe(payload.publishable_key);
+        const elements = stripe.elements({ clientSecret: payload.client_secret });
+        const payment = elements.create('payment');
+        const node = document.getElementById('reya-payment-element');
+        if (node) {
+          payment.mount(node);
+        }
+        stripeRef.current = stripe;
+        elementsRef.current = elements;
+        setState('ready');
+      })
+      .catch((err) => {
+        if (!cancel) {
+          setError(err.message || 'Card payment could not be started.');
+          setState('failed');
+        }
+      });
+    return () => {
+      cancel = true;
+    };
+  }, [total]);
+
+  async function pay() {
+    if (!stripeRef.current || !elementsRef.current) {
+      return;
+    }
+    setError('');
+    const result = await stripeRef.current.confirmPayment({
+      elements: elementsRef.current,
+      confirmParams: { return_url: window.location.href },
+      redirect: 'if_required',
+    });
+    if (result.error) {
+      setError(result.error.message || 'The card payment did not complete.');
+      return;
+    }
+    if (result.paymentIntent?.status !== 'succeeded') {
+      setError('The card payment did not complete. No visit was booked.');
+      return;
+    }
+    onPaid();
+  }
+
+  return (
+    <View>
+      <Pressable onPress={onBack} style={styles.backButton}>
+        <Text style={styles.back}>← Back</Text>
+      </Pressable>
+      <Text style={styles.title}>Payment</Text>
+      <Text style={styles.answer}>Total {money(total)}</Text>
+      {state === 'loading' ? <Text style={styles.copy}>Preparing card payment…</Text> : null}
+      {state === 'offline' ? (
+        <View>
+          <Text style={styles.copy}>Card payment is not connected on this demo yet. No card will be charged.</Text>
+          <Pressable onPress={onSkipCharge} disabled={saving} style={styles.confirmPill}>
+            <Text style={styles.confirmPillText}>{saving ? 'Saving…' : 'Finish booking without charging'}</Text>
+          </Pressable>
+        </View>
+      ) : null}
+      {state === 'ready' ? (
+        <View>
+          <View nativeID="reya-payment-element" style={styles.cardMount} />
+          <Pressable onPress={pay} disabled={saving} style={styles.confirmPill}>
+            <Text style={styles.confirmPillText}>{saving ? 'Saving…' : `Pay ${money(total)}`}</Text>
+          </Pressable>
+        </View>
+      ) : null}
+      {error ? <Text style={styles.error}>{error}</Text> : null}
+      {saveError ? <Text style={styles.error}>{saveError}</Text> : null}
+    </View>
+  );
+}
+
+function PayStep({ email, choice, saving, saveError, onChoice, onEdit, onLegal, onDecline, onConfirm, onCancel }) {
+  return (
+    <View>
+      <View style={styles.contactHead}>
+        <Text style={styles.contactHeading}>Contact Information</Text>
+        <Pressable onPress={onEdit} accessibilityRole="button">
+          <Text style={styles.editLink}>Edit ›</Text>
+        </Pressable>
+      </View>
+      <View style={styles.contactRow}>
+        <Text style={styles.reviewLabel}>Email</Text>
+        <Text style={styles.reviewValue}>{email}</Text>
+      </View>
+      <Text style={styles.payQuestion}>Lastly, how will this visit be paid for?</Text>
+      <PayRadio label="I will be using insurance" badge="Coming soon" disabled />
+      <PayRadio
+        label="I have pre-paid or someone else is responsible"
+        selected={choice === 'prepaid'}
+        onPress={() => onChoice('prepaid')}
+      />
+      <PayRadio
+        label="I will be paying out of pocket"
+        selected={choice === 'self_pay'}
+        onPress={() => onChoice('self_pay')}
+      />
+      <View style={styles.disclaimer}>
+        <Text style={styles.disclaimerText}>
+          Reya only books self-pay visits. We cannot book a visit that will be submitted to insurance. If you have insurance you may still choose self-pay, but this visit cannot be used for an insurance claim.
+        </Text>
+      </View>
+      <Text style={styles.legal}>
+        By clicking <Text style={styles.legalStrong}>Confirm Appointment</Text>, you confirm that you have read, understand and agree to the{' '}
+        <Text style={styles.legalLink} onPress={() => onLegal('terms')}>Online Services User Agreement</Text>
+        {' '}and{' '}
+        <Text style={styles.legalLink} onPress={() => onLegal('privacy')}>Privacy Policy</Text>.
+      </Text>
+      <Pressable onPress={onDecline} style={styles.decline}>
+        <Text style={styles.declineText}>Decline</Text>
+      </Pressable>
+      {saveError ? <Text style={styles.error}>{saveError}</Text> : null}
+      <View style={styles.payActions}>
+        <Pressable onPress={onConfirm} disabled={saving} style={styles.confirmPill}>
+          <Text style={styles.confirmPillText}>{saving ? 'Saving…' : 'Confirm Appointment'}</Text>
+        </Pressable>
+        <Pressable onPress={onCancel} style={styles.cancelPill}>
+          <Text style={styles.cancelPillText}>Cancel</Text>
+        </Pressable>
+      </View>
+    </View>
+  );
+}
+
+function PayRadio({ label, badge, selected, disabled, onPress }) {
+  return (
+    <Pressable
+      disabled={disabled}
+      onPress={onPress}
+      accessibilityRole="radio"
+      accessibilityState={{ disabled: Boolean(disabled), selected: Boolean(selected) }}
+      style={[styles.payOption, disabled && styles.payOptionOff]}
+    >
+      <View style={[styles.radio, selected && styles.radioOn, disabled && styles.radioOff]}>
+        {selected ? <View style={styles.radioDot} /> : null}
+      </View>
+      <View style={styles.payOptionLine}>
+        <Text style={[styles.payOptionLabel, disabled && styles.payOptionLabelOff]}>{label}</Text>
+        {badge ? <Text style={styles.comingSoon}>{badge}</Text> : null}
+      </View>
+    </Pressable>
   );
 }
 
@@ -1158,11 +1487,11 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
     alignItems: 'center',
     borderBottomWidth: 1,
-    borderBottomColor: '#D6DDF5',
+    borderBottomColor: colors.line,
     paddingBottom: 8,
   },
-  reviewHeading: { fontFamily: font, color: '#3156C9', fontSize: 18, fontWeight: '700' },
-  editLink: { fontFamily: font, color: '#3156C9', fontWeight: '700' },
+  reviewHeading: { fontFamily: font, color: colors.purple, fontSize: 18, fontWeight: '700' },
+  editLink: { fontFamily: font, color: colors.purple, fontWeight: '700' },
   reviewRow: { flexDirection: 'row', gap: 16, paddingVertical: 10 },
   reviewLabel: { fontFamily: font, fontWeight: '700', color: colors.ink, width: 180 },
   reviewValue: { fontFamily: font, color: colors.ink, flex: 1 },
@@ -1200,4 +1529,88 @@ const styles = StyleSheet.create({
     paddingVertical: 12,
   },
   continueOffText: { fontFamily: font, color: colors.muted, fontWeight: '700' },
+  screen: { flex: 1 },
+  contactHead: {
+    marginTop: 8,
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    borderBottomWidth: 1,
+    borderBottomColor: colors.line,
+    paddingBottom: 10,
+  },
+  contactHeading: { fontFamily: font, color: colors.purple, fontSize: 22, fontWeight: '700' },
+  contactRow: {
+    flexDirection: 'row',
+    gap: 16,
+    paddingVertical: 14,
+    borderBottomWidth: 1,
+    borderBottomColor: colors.line,
+  },
+  payQuestion: { fontFamily: font, color: colors.ink, fontSize: 22, fontWeight: '500', marginTop: 28, lineHeight: 30 },
+  payOption: { flexDirection: 'row', alignItems: 'center', gap: 12, marginTop: 16 },
+  payOptionOff: { opacity: 0.55 },
+  payOptionLine: { flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', gap: 8, flex: 1 },
+  payOptionLabel: { fontFamily: font, color: colors.ink, fontSize: 16 },
+  payOptionLabelOff: { color: colors.muted },
+  comingSoon: { fontFamily: font, color: colors.purple, fontWeight: '700', fontSize: 14 },
+  radio: {
+    width: 22,
+    height: 22,
+    borderRadius: 11,
+    borderWidth: 2,
+    borderColor: colors.ink,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  radioOn: { borderColor: colors.purple },
+  radioOff: { borderColor: '#B0B0B0' },
+  radioDot: { width: 10, height: 10, borderRadius: 5, backgroundColor: colors.purple },
+  disclaimer: { marginTop: 18, backgroundColor: '#F6F3F8', borderRadius: 12, padding: 14 },
+  disclaimerText: { fontFamily: font, color: colors.ink, lineHeight: 22, fontSize: 15 },
+  legal: { fontFamily: font, color: colors.ink, marginTop: 18, lineHeight: 22, fontSize: 15 },
+  legalStrong: { fontFamily: font, fontWeight: '700', color: colors.ink },
+  legalLink: { fontFamily: font, color: colors.purple, fontWeight: '700', textDecorationLine: 'underline' },
+  decline: { alignSelf: 'flex-start', marginTop: 12 },
+  declineText: { fontFamily: font, color: colors.purple, fontWeight: '700', textDecorationLine: 'underline' },
+  payActions: { flexDirection: 'row', flexWrap: 'wrap', gap: 12, marginTop: 22, alignItems: 'center' },
+  confirmPill: {
+    backgroundColor: colors.purple,
+    borderRadius: 28,
+    paddingHorizontal: 22,
+    paddingVertical: 14,
+    cursor: 'pointer',
+  },
+  confirmPillText: { fontFamily: font, color: colors.white, fontWeight: '700', fontSize: 16 },
+  cancelPill: {
+    borderWidth: 1.5,
+    borderColor: colors.purple,
+    borderRadius: 28,
+    paddingHorizontal: 22,
+    paddingVertical: 14,
+    backgroundColor: colors.white,
+    cursor: 'pointer',
+  },
+  cancelPillText: { fontFamily: font, color: colors.purple, fontWeight: '700', fontSize: 16 },
+  overlay: {
+    position: 'absolute',
+    top: 0,
+    right: 0,
+    bottom: 0,
+    left: 0,
+    backgroundColor: 'rgba(31, 12, 32, 0.45)',
+    alignItems: 'center',
+    justifyContent: 'center',
+    padding: 24,
+    zIndex: 20,
+  },
+  dialog: {
+    width: '100%',
+    maxWidth: 460,
+    backgroundColor: colors.white,
+    borderRadius: 16,
+    padding: 24,
+  },
+  dialogTitle: { fontFamily: font, color: colors.ink, fontSize: 24, fontWeight: '700' },
+  cardMount: { marginTop: 16, minHeight: 180 },
 });

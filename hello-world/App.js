@@ -15,6 +15,21 @@ export default function App() {
   const [account, setAccount] = useState(() => (patientToken() && patientName() ? { name: patientName() } : null));
 
   useEffect(() => {
+    if (Platform.OS !== 'web' || typeof window === 'undefined') {
+      return;
+    }
+    const params = new URLSearchParams(window.location.search);
+    const finish = params.get('finish_email');
+    if (!finish) {
+      return;
+    }
+    setScreen({ name: 'portal', finishEmail: finish });
+    params.delete('finish_email');
+    const query = params.toString();
+    window.history.replaceState({}, '', `${window.location.pathname}${query ? `?${query}` : ''}`);
+  }, []);
+
+  useEffect(() => {
     if (Platform.OS !== 'web' || typeof document === 'undefined') {
       return;
     }
@@ -32,6 +47,7 @@ export default function App() {
 
   const home = () => setScreen({ name: 'home' });
   const about = () => setScreen({ name: 'about' });
+  const office = () => setScreen({ name: 'office' });
   const portal = () => setScreen({ name: 'portal' });
   const signOut = () => {
     forgetPatient();
@@ -40,10 +56,6 @@ export default function App() {
   };
   const header = { account, onPortal: portal, onSignOut: signOut };
   const book = (visit) => {
-    if (!patientToken()) {
-      setScreen({ name: 'portal', visit });
-      return;
-    }
     setScreen({ name: 'booking', visit });
   };
 
@@ -69,11 +81,12 @@ export default function App() {
           onSignOut={signOut}
         />
       ) : null}
-      {screen.name === 'about' ? <AboutScreen onHome={home} {...header} /> : null}
+      {screen.name === 'about' ? <AboutScreen onHome={home} onOffice={office} {...header} /> : null}
       {screen.name === 'office' ? <AdminScreen onHome={home} onAbout={about} {...header} /> : null}
       {screen.name === 'portal' ? (
         <PatientScreen
           visit={screen.visit}
+          finishEmail={screen.finishEmail || ''}
           onHome={home}
           onAbout={about}
           onBook={book}
@@ -86,7 +99,14 @@ export default function App() {
         <VisitScreen visit={screen.visit} onHome={home} onAbout={about} onBack={home} {...header} />
       ) : null}
       {screen.name === 'booking' ? (
-        <BookingScreen visit={screen.visit} onHome={home} onAbout={about} onBack={home} {...header} />
+        <BookingScreen
+          visit={screen.visit}
+          onHome={home}
+          onAbout={about}
+          onBack={home}
+          onAccount={setAccount}
+          {...header}
+        />
       ) : null}
     </View>
   );

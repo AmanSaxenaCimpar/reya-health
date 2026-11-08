@@ -70,6 +70,7 @@ def _flat_booking(booking: dict) -> dict:
         "service_fee": _money(booking.get("service_fee")),
         "setup_fee": _money(booking.get("setup_fee")),
         "total": _money(booking.get("total")),
+        "payment_method": booking.get("payment_method") or "",
     }
 
 

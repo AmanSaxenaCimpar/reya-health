@@ -2,7 +2,7 @@ import { Pressable, StyleSheet, Text, View } from 'react-native';
 import { SiteHeader } from '../SiteHeader';
 import { colors, font } from '../theme';
 
-export function AboutScreen({ onHome, account, onPortal, onSignOut }) {
+export function AboutScreen({ onHome, onOffice, account, onPortal, onSignOut }) {
   return (
     <View style={styles.page}>
       <SiteHeader onHome={onHome} onAbout={() => {}} aboutActive account={account} onPortal={onPortal} onSignOut={onSignOut} />
@@ -18,6 +18,9 @@ export function AboutScreen({ onHome, account, onPortal, onSignOut }) {
         </Text>
         <Text style={styles.copy}>info@reya.net</Text>
         <Text style={styles.copy}>(847) 423-5560</Text>
+        <Pressable onPress={onOffice} style={styles.admin}>
+          <Text style={styles.adminText}>Admin login</Text>
+        </Pressable>
       </View>
     </View>
   );
@@ -52,5 +55,15 @@ const styles = StyleSheet.create({
     lineHeight: 24,
     color: colors.ink,
     marginTop: 16,
+  },
+  admin: {
+    alignSelf: 'flex-start',
+    marginTop: 28,
+  },
+  adminText: {
+    fontFamily: font,
+    color: colors.purple,
+    fontSize: 14,
+    textDecorationLine: 'underline',
   },
 });

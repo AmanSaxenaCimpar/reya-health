@@ -106,6 +106,37 @@ def confirm_email(token: str) -> dict:
     return {"email": account["email"], "verified": True}
 
 
+def send_finish_link(email: str, name: str) -> dict:
+    email = str(email or "").strip().lower()
+    email_error = check_email(email)
+    if email_error:
+        raise PatientError(email_error)
+    name = " ".join(str(name or "").split()) or email
+    with LOCK:
+        data = _load()
+        account = next((row for row in data["accounts"] if row["email"] == email), None)
+        raw = ""
+        if account is not None and not account.get("verified", True):
+            raw = _new_verify_token(account)
+            _save(data)
+    if account is not None and not account.get("verified", True):
+        sent = _send_verification(account, raw)
+        return {"email_sent": sent, "preview_link": "" if sent else _verify_link(raw)}
+    link = _finish_link(email)
+    sent = _smtp_send(
+        email,
+        "Finish your Reya Health account",
+        (
+            f"Hello {name},\n\n"
+            "Your visit is already booked. Use this link to finish a Reya Health account with this email. "
+            "An account is optional.\n\n"
+            f"{link}\n\n"
+            "If you already have an account, sign in with this email instead.\n"
+        ),
+    )
+    return {"email_sent": sent, "preview_link": "" if sent else link}
+
+
 def resend_verification(email: str) -> dict:
     email = str(email or "").strip().lower()
     with LOCK:
@@ -158,6 +189,7 @@ def record_visit(token: str, booking: dict, order: dict) -> dict:
         "address": booking.get("address") or booking.get("zip") or "",
         "tests": [item.get("name") or item.get("code") or "Test" for item in (tests or [])],
         "total": booking.get("total") or 0,
+        "payment_method": booking.get("payment_method") or "",
         "order_id": order.get("order_id") or "",
         "order_file": order.get("order_file") or "",
         "order_source": "uploaded" if str(booking.get("order") or "").lower() == "yes" else "created",
@@ -395,12 +427,21 @@ def _new_verify_token(account: dict) -> str:
     return raw
 
 
+def _app_base() -> str:
+    return os.environ.get("PUBLIC_APP_URL", "https://reya-health.onrender.com").strip().rstrip("/")
+
+
 def _verify_link(token: str) -> str:
-    base = os.environ.get("PUBLIC_APP_URL", "https://reya-health.onrender.com").strip().rstrip("/")
-    return f"{base}/?verify={token}"
+    return f"{_app_base()}/?verify={token}"
 
 
-def _send_verification(account: dict, token: str) -> bool:
+def _finish_link(email: str) -> str:
+    from urllib.parse import quote
+
+    return f"{_app_base()}/?finish_email={quote(email)}"
+
+
+def _smtp_send(to: str, subject: str, content: str) -> bool:
     host = os.environ.get("SMTP_HOST", "").strip()
     if not host:
         return False
@@ -408,15 +449,10 @@ def _send_verification(account: dict, token: str) -> bool:
     from email.message import EmailMessage
 
     message = EmailMessage()
-    message["Subject"] = "Confirm your Reya Health email"
+    message["Subject"] = subject
     message["From"] = os.environ.get("SMTP_FROM", "noreply@reyahealth.com")
-    message["To"] = account["email"]
-    message.set_content(
-        f"Hello {account.get('name') or account['email']},\n\n"
-        "Confirm this email before signing in to the Reya Health patient portal.\n\n"
-        f"{_verify_link(token)}\n\n"
-        "This link expires in 24 hours. If you did not create an account, you can ignore this message.\n"
-    )
+    message["To"] = to
+    message.set_content(content)
     try:
         with smtplib.SMTP(host, int(os.environ.get("SMTP_PORT", "587"))) as smtp:
             if os.environ.get("SMTP_USER"):
@@ -426,6 +462,19 @@ def _send_verification(account: dict, token: str) -> bool:
     except Exception:
         return False
     return True
+
+
+def _send_verification(account: dict, token: str) -> bool:
+    return _smtp_send(
+        account["email"],
+        "Confirm your Reya Health email",
+        (
+            f"Hello {account.get('name') or account['email']},\n\n"
+            "Confirm this email before signing in to the Reya Health patient portal.\n\n"
+            f"{_verify_link(token)}\n\n"
+            "This link expires in 24 hours. If you did not create an account, you can ignore this message.\n"
+        ),
+    )
 
 
 def _secret() -> str:

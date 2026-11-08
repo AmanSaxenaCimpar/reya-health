@@ -7,6 +7,7 @@ import {
   patientMessage,
   patientResend,
   patientVerify,
+  patientFinishLink,
   patientProfile,
   patientRead,
   patientSignup,
@@ -66,11 +67,11 @@ const emptyProfile = {
   pharmacy_address: '',
 };
 
-export function PatientScreen({ visit, onHome, onAbout, onBook, account, onAccount, onSignOut }) {
+export function PatientScreen({ visit, finishEmail, onHome, onAbout, onBook, account, onAccount, onSignOut }) {
   const [token, setToken] = useState(patientToken);
-  const [mode, setMode] = useState('signin');
+  const [mode, setMode] = useState(finishEmail ? 'signup' : 'signin');
   const [name, setName] = useState('');
-  const [email, setEmail] = useState('');
+  const [email, setEmail] = useState(finishEmail || '');
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
   const [pendingEmail, setPendingEmail] = useState('');
@@ -214,9 +215,9 @@ export function PatientScreen({ visit, onHome, onAbout, onBook, account, onAccou
                 ? 'Your email is confirmed. Sign in to open the portal.'
                 : pendingEmail
                   ? `Open the confirmation link sent to ${pendingEmail}. The portal stays closed until that email is confirmed.`
-                  : visit
-                    ? 'Sign in to continue this booking. Your name stays on the screen while you book.'
-                    : 'Your orders, results, messages, and pharmacy details live here.'}
+                  : finishEmail
+                    ? 'Finish your account with the email from your visit, or sign in if you already have one. Booking does not require an account.'
+                    : 'Your orders, results, messages, and pharmacy details live here. You can book a visit without an account.'}
             </Text>
             {pendingEmail ? (
               <View>
@@ -471,6 +472,133 @@ function FileList({ title, files, empty }) {
   );
 }
 
+export function AccountPrompt({ email, suggestedName, onSignedIn }) {
+  const [mode, setMode] = useState('choose');
+  const [name, setName] = useState(suggestedName || '');
+  const [password, setPassword] = useState('');
+  const [error, setError] = useState('');
+  const [pendingEmail, setPendingEmail] = useState('');
+  const [previewLink, setPreviewLink] = useState('');
+  const [skipped, setSkipped] = useState(false);
+  const [signedInName, setSignedInName] = useState('');
+
+  async function createAccount() {
+    setError('');
+    const nameError = checkName(name, 'full name');
+    if (nameError) {
+      setError(nameError);
+      return;
+    }
+    if (password.length < 8) {
+      setError('Use a password of at least 8 characters.');
+      return;
+    }
+    try {
+      const result = await patientSignup({ name, email, password });
+      setPendingEmail(email);
+      setPreviewLink(result.preview_link || '');
+      setPassword('');
+    } catch (err) {
+      setError(err.message);
+    }
+  }
+
+  async function signIn() {
+    setError('');
+    if (password.length < 8) {
+      setError('Use a password of at least 8 characters.');
+      return;
+    }
+    try {
+      const result = await patientLogin(email, password);
+      rememberPatient(result);
+      setSignedInName(result.name || email);
+      onSignedIn(result);
+    } catch (err) {
+      setError(err.message);
+    }
+  }
+
+  async function skip() {
+    setError('');
+    try {
+      const result = await patientFinishLink(email, name || suggestedName || '');
+      setPreviewLink(result.preview_link || '');
+      setSkipped(true);
+    } catch (err) {
+      setError(err.message);
+    }
+  }
+
+  return (
+    <View style={styles.accountCard}>
+      <Text style={styles.panelTitle}>Your account</Text>
+      {signedInName ? (
+        <Text style={styles.copy}>You are signed in as {signedInName}.</Text>
+      ) : pendingEmail ? (
+        <View>
+          <Text style={styles.copy}>
+            Open the confirmation link for {pendingEmail}. You are not signed in until that email is confirmed.
+          </Text>
+          {previewLink ? (
+            <View>
+              <Text style={styles.copy}>No email was sent. Mail is not connected on this server yet, so use this confirmation link:</Text>
+              <Text selectable style={styles.linkText}>{previewLink}</Text>
+            </View>
+          ) : (
+            <Text style={styles.copy}>Check the inbox and spam folder for {pendingEmail}.</Text>
+          )}
+        </View>
+      ) : skipped ? (
+        <View>
+          <Text style={styles.copy}>
+            We will email {email} a link to finish your account. This visit is already booked.
+          </Text>
+          {previewLink ? (
+            <View>
+              <Text style={styles.copy}>No email was sent. Mail is not connected on this server yet, so use this link:</Text>
+              <Text selectable style={styles.linkText}>{previewLink}</Text>
+            </View>
+          ) : null}
+        </View>
+      ) : mode === 'choose' ? (
+        <View>
+          <Text style={styles.copy}>
+            Booking does not require an account. Create one with {email}, sign in if you already have one, or skip and we will email you a link.
+          </Text>
+          <Pressable onPress={() => setMode('signup')} style={styles.button}>
+            <Text style={styles.buttonText}>Create an account now</Text>
+          </Pressable>
+          <Pressable onPress={() => setMode('signin')} style={styles.ghost}>
+            <Text style={styles.ghostText}>Sign in</Text>
+          </Pressable>
+          <Pressable onPress={skip} style={styles.ghost}>
+            <Text style={styles.ghostText}>Skip — email me a link</Text>
+          </Pressable>
+        </View>
+      ) : (
+        <View>
+          <Text style={styles.copy}>
+            {mode === 'signup'
+              ? 'Create an account with the email from this visit. You can sign in after the email is confirmed.'
+              : 'Sign in with the email from this visit.'}
+          </Text>
+          {mode === 'signup' ? <Field label="Full name" value={name} onChangeText={setName} /> : null}
+          <Field label="Email" value={email} editable={false} />
+          <Field label="Password" value={password} secureTextEntry placeholder="At least 8 characters" onChangeText={setPassword} />
+          <Pressable onPress={mode === 'signup' ? createAccount : signIn} style={styles.button}>
+            <Text style={styles.buttonText}>{mode === 'signup' ? 'Create account' : 'Sign in'}</Text>
+          </Pressable>
+          <Pressable onPress={() => { setMode('choose'); setError(''); }} style={styles.ghost}>
+            <Text style={styles.ghostText}>Back</Text>
+          </Pressable>
+        </View>
+      )}
+      {error ? <Text style={styles.error}>{error}</Text> : null}
+    </View>
+  );
+}
+
 function fileLink(file) {
   if (file.kind === 'order' && file.order_id) {
     return `${API_URL}/orders/${file.order_id}`;
@@ -547,6 +675,7 @@ const styles = StyleSheet.create({
   button: { marginTop: 16, alignSelf: 'flex-start', backgroundColor: colors.purple, borderRadius: 12, paddingHorizontal: 18, paddingVertical: 12 },
   buttonText: { fontFamily: font, color: colors.white, fontWeight: '700' },
   ghost: { marginTop: 12, alignSelf: 'flex-start', borderWidth: 1, borderColor: colors.line, borderRadius: 12, paddingHorizontal: 16, paddingVertical: 12, backgroundColor: colors.white },
+  accountCard: { marginTop: 22, borderWidth: 1, borderColor: colors.line, borderRadius: 16, padding: 18, backgroundColor: colors.white },
   ghostText: { fontFamily: font, color: colors.ink, fontWeight: '700' },
   error: { fontFamily: font, color: '#B42318', marginTop: 10 },
   notice: { fontFamily: font, color: colors.ink, backgroundColor: '#EFE7F6', borderRadius: 12, padding: 12, marginBottom: 8 },
