@@ -3,13 +3,13 @@ import BookingFrame, { HEALTHIE_EMBED_URL } from '../BookingFrame';
 import { SiteHeader } from '../SiteHeader';
 import { colors, font, serviceLabels } from '../theme';
 
-export function VisitScreen({ visit, onHome, onAbout, onBack }) {
+export function VisitScreen({ visit, onHome, onAbout, onBack, account, onPortal, onSignOut }) {
   const title = visit?.company || serviceLabels[visit?.service] || 'Book visit';
   const url = visit?.url || HEALTHIE_EMBED_URL;
 
   return (
     <ScrollView style={styles.page} contentContainerStyle={styles.content}>
-      <SiteHeader onHome={onHome} onAbout={onAbout} />
+      <SiteHeader onHome={onHome} onAbout={onAbout} account={account} onPortal={onPortal} onSignOut={onSignOut} />
       <View style={styles.body}>
         <Pressable onPress={onBack}>
           <Text style={styles.back}>← Back</Text>

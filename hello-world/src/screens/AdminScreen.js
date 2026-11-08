@@ -7,6 +7,7 @@ import {
   officeCatalog,
   officeLogin,
   officeMessage,
+  officeNote,
   officePatients,
   officeResult,
   removeOfficeTest,
@@ -21,7 +22,7 @@ import { colors, font } from '../theme';
 
 const TOKEN_KEY = 'reya_office_token';
 
-export function AdminScreen({ onHome, onAbout }) {
+export function AdminScreen({ onHome, onAbout, account, onPortal, onSignOut }) {
   const [token, setToken] = useState(() => {
     try {
       return window.sessionStorage.getItem(TOKEN_KEY) || '';
@@ -164,7 +165,7 @@ export function AdminScreen({ onHome, onAbout }) {
 
   return (
     <ScrollView style={styles.page} contentContainerStyle={styles.content}>
-      <SiteHeader onHome={onHome} onAbout={onAbout} />
+      <SiteHeader onHome={onHome} onAbout={onAbout} onPortal={onPortal} account={account} onSignOut={onSignOut} />
       <View style={styles.body}>
         <Text style={styles.title}>Back office</Text>
         {!token || !catalog ? (
@@ -365,6 +366,7 @@ export function AdminScreen({ onHome, onAbout }) {
 
 function PatientDesk({ visits, selectedId, note, token, onSelect, onNote, onChange }) {
   const current = visits.find((item) => item.id === selectedId);
+  const [doctorNote, setDoctorNote] = useState('');
   async function reply() {
     if (!current || !note.trim()) {
       return;
@@ -423,6 +425,20 @@ function PatientDesk({ visits, selectedId, note, token, onSelect, onNote, onChan
           <Field label="Reply to the patient" value={note} multiline onChangeText={onNote} />
           <Pressable onPress={reply} style={styles.button}>
             <Text style={styles.buttonText}>Send reply</Text>
+          </Pressable>
+          <Field label="Doctor's note" value={doctorNote} multiline onChangeText={setDoctorNote} />
+          <Pressable
+            onPress={async () => {
+              if (!doctorNote.trim()) {
+                return;
+              }
+              await officeNote(token, current.id, doctorNote.trim());
+              setDoctorNote('');
+              await onChange("Doctor's note saved. The patient can read it in the portal.");
+            }}
+            style={styles.button}
+          >
+            <Text style={styles.buttonText}>Save doctor's note</Text>
           </Pressable>
         </View>
       ) : null}

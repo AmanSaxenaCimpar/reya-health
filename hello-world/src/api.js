@@ -210,6 +210,18 @@ export function patientMessage(token, visitId, body) {
   return patientFetch('/patient/messages', token, { method: 'POST', body: JSON.stringify({ visit_id: visitId, body }) });
 }
 
+export function patientProfile(token, profile) {
+  return patientFetch('/patient/profile', token, { method: 'PUT', body: JSON.stringify(profile) });
+}
+
+export function patientRead(token) {
+  return patientFetch('/patient/messages/read', token, { method: 'POST', body: '{}' });
+}
+
+export function officeNote(token, visitId, body) {
+  return officeFetch('/office/notes', token, { method: 'POST', body: JSON.stringify({ visit_id: visitId, body }) });
+}
+
 export function loadQuestionnaires(labCodes = [], imagingCodes = [], service, business) {
   const params = new URLSearchParams();
   if (service) {

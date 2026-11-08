@@ -50,6 +50,15 @@ def signup(name: str, email: str, password: str) -> dict:
             "id": secrets.token_urlsafe(12),
             "name": name,
             "email": email,
+            "phone": "",
+            "address": "",
+            "city": "",
+            "state": "",
+            "zip": "",
+            "dob": "",
+            "pharmacy_name": "",
+            "pharmacy_phone": "",
+            "pharmacy_address": "",
             "salt": secrets.token_hex(16),
             "password_hash": "",
             "created": _now(),
@@ -114,6 +123,7 @@ def record_visit(token: str, booking: dict, order: dict) -> dict:
         "order_source": "uploaded" if str(booking.get("order") or "").lower() == "yes" else "created",
         "documents": [],
         "messages": [],
+        "notes": [],
         "created": _now(),
     }
     if visit["order_id"]:
@@ -139,7 +149,49 @@ def visits_for_patient(token: str) -> dict:
     account = account_from_token(token)
     rows = [row for row in _load()["visits"] if row["patient_id"] == account["id"]]
     rows.sort(key=lambda row: row.get("created") or "", reverse=True)
-    return {"name": account["name"], "email": account["email"], "visits": [_public_visit(row) for row in rows]}
+    return {**_public_account(account), "unread": _unread(rows), "visits": [_public_visit(row) for row in rows]}
+
+
+def update_profile(token: str, fields: dict) -> dict:
+    account = account_from_token(token)
+    allowed = {"phone", "address", "city", "state", "zip", "dob", "pharmacy_name", "pharmacy_phone", "pharmacy_address"}
+    with LOCK:
+        data = _load()
+        saved = next(row for row in data["accounts"] if row["id"] == account["id"])
+        for key in allowed:
+            if key in fields:
+                saved[key] = " ".join(str(fields.get(key) or "").split())[:160]
+        _save(data)
+    return visits_for_patient(token)
+
+
+def mark_messages_read(token: str) -> dict:
+    account = account_from_token(token)
+    with LOCK:
+        data = _load()
+        for visit in data["visits"]:
+            if visit.get("patient_id") != account["id"]:
+                continue
+            for message in visit.get("messages") or []:
+                if message.get("by") == "office":
+                    message["unread"] = False
+        _save(data)
+    return visits_for_patient(token)
+
+
+def add_doctor_note(visit_id: str, business_id: str, author: str, body: str) -> dict:
+    text = " ".join(str(body or "").split())
+    if not text:
+        raise PatientError("Write the note first.")
+    if len(text) > 4000:
+        raise PatientError("Keep the note under 4000 characters.")
+    with LOCK:
+        store = _load()
+        visit = _owned_visit(store, visit_id, None, business_id)
+        note = {"id": secrets.token_urlsafe(8), "body": text, "author": author or "Care team", "created": _now()}
+        visit.setdefault("notes", []).append(note)
+        _save(store)
+    return note
 
 
 def visits_for_business(business_id: str) -> list:
@@ -222,7 +274,14 @@ def _add_message(visit_id, body, by, author, patient_id, business_id) -> dict:
     with LOCK:
         store = _load()
         visit = _owned_visit(store, visit_id, patient_id, business_id)
-        message = {"id": secrets.token_urlsafe(8), "body": text, "by": by, "author": author, "created": _now()}
+        message = {
+            "id": secrets.token_urlsafe(8),
+            "body": text,
+            "by": by,
+            "author": author,
+            "created": _now(),
+            "unread": by == "office",
+        }
         visit["messages"].append(message)
         _save(store)
     return message
@@ -238,6 +297,7 @@ def _owned_visit(store, visit_id, patient_id, business_id):
         raise PatientError("That visit belongs to another business.")
     visit.setdefault("documents", [])
     visit.setdefault("messages", [])
+    visit.setdefault("notes", [])
     return visit
 
 
@@ -250,7 +310,29 @@ def _find_document(doc_id: str):
 
 
 def _public_account(account: dict) -> dict:
-    return {"id": account["id"], "name": account["name"], "email": account["email"]}
+    return {
+        "id": account["id"],
+        "name": account["name"],
+        "email": account["email"],
+        "phone": account.get("phone") or "",
+        "address": account.get("address") or "",
+        "city": account.get("city") or "",
+        "state": account.get("state") or "",
+        "zip": account.get("zip") or "",
+        "dob": account.get("dob") or "",
+        "pharmacy_name": account.get("pharmacy_name") or "",
+        "pharmacy_phone": account.get("pharmacy_phone") or "",
+        "pharmacy_address": account.get("pharmacy_address") or "",
+    }
+
+
+def _unread(visits: list) -> int:
+    count = 0
+    for visit in visits:
+        for message in visit.get("messages") or []:
+            if message.get("by") == "office" and message.get("unread", True):
+                count += 1
+    return count
 
 
 def _public_visit(visit: dict) -> dict:

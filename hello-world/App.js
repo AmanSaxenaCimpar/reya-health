@@ -6,12 +6,13 @@ import { AboutScreen } from './src/screens/AboutScreen';
 import { AccessGate, hasAccess } from './src/screens/AccessGate';
 import { BookingScreen } from './src/screens/BookingScreen';
 import { HomeScreen } from './src/screens/HomeScreen';
-import { PatientScreen, patientToken } from './src/screens/PatientScreen';
+import { PatientScreen, forgetPatient, patientName, patientToken } from './src/screens/PatientScreen';
 import { VisitScreen } from './src/screens/VisitScreen';
 
 export default function App() {
   const [unlocked, setUnlocked] = useState(() => hasAccess());
   const [screen, setScreen] = useState({ name: 'home' });
+  const [account, setAccount] = useState(() => (patientToken() && patientName() ? { name: patientName() } : null));
 
   useEffect(() => {
     if (Platform.OS !== 'web' || typeof document === 'undefined') {
@@ -33,6 +34,12 @@ export default function App() {
   const about = () => setScreen({ name: 'about' });
   const office = () => setScreen({ name: 'office' });
   const portal = () => setScreen({ name: 'portal' });
+  const signOut = () => {
+    forgetPatient();
+    setAccount(null);
+    setScreen({ name: 'home' });
+  };
+  const header = { account, onPortal: portal, onSignOut: signOut };
   const book = (visit) => {
     if (!patientToken()) {
       setScreen({ name: 'portal', visit });
@@ -60,18 +67,29 @@ export default function App() {
           onPortal={portal}
           onBook={book}
           onCompanyBook={(visit) => setScreen({ name: 'visit', visit })}
+          account={account}
+          onSignOut={signOut}
         />
       ) : null}
-      {screen.name === 'about' ? <AboutScreen onHome={home} /> : null}
-      {screen.name === 'office' ? <AdminScreen onHome={home} onAbout={about} /> : null}
+      {screen.name === 'about' ? <AboutScreen onHome={home} {...header} /> : null}
+      {screen.name === 'office' ? <AdminScreen onHome={home} onAbout={about} {...header} /> : null}
       {screen.name === 'portal' ? (
-        <PatientScreen visit={screen.visit} onHome={home} onAbout={about} onOffice={office} onBook={book} />
+        <PatientScreen
+          visit={screen.visit}
+          onHome={home}
+          onAbout={about}
+          onOffice={office}
+          onBook={book}
+          account={account}
+          onAccount={setAccount}
+          onSignOut={signOut}
+        />
       ) : null}
       {screen.name === 'visit' ? (
-        <VisitScreen visit={screen.visit} onHome={home} onAbout={about} onBack={home} />
+        <VisitScreen visit={screen.visit} onHome={home} onAbout={about} onBack={home} {...header} />
       ) : null}
       {screen.name === 'booking' ? (
-        <BookingScreen visit={screen.visit} onHome={home} onAbout={about} onBack={home} />
+        <BookingScreen visit={screen.visit} onHome={home} onAbout={about} onBack={home} {...header} />
       ) : null}
     </View>
   );

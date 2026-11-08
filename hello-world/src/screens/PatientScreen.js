@@ -5,6 +5,8 @@ import {
   patientDocument,
   patientLogin,
   patientMessage,
+  patientProfile,
+  patientRead,
   patientSignup,
   patientVisits,
 } from '../api';
@@ -12,6 +14,7 @@ import { SiteHeader } from '../SiteHeader';
 import { colors, font, money } from '../theme';
 
 const TOKEN_KEY = 'reya_patient_token';
+const NAME_KEY = 'reya_patient_name';
 
 export function patientToken() {
   try {
@@ -21,21 +24,57 @@ export function patientToken() {
   }
 }
 
-function storeToken(token) {
-  window.sessionStorage.setItem(TOKEN_KEY, token);
+export function patientName() {
+  try {
+    return window.sessionStorage.getItem(NAME_KEY) || '';
+  } catch {
+    return '';
+  }
 }
 
-export function PatientScreen({ visit, onHome, onAbout, onOffice, onBook }) {
+export function rememberPatient(result) {
+  window.sessionStorage.setItem(TOKEN_KEY, result.token);
+  window.sessionStorage.setItem(NAME_KEY, result.name || '');
+}
+
+export function forgetPatient() {
+  window.sessionStorage.removeItem(TOKEN_KEY);
+  window.sessionStorage.removeItem(NAME_KEY);
+}
+
+const NAV = [
+  ['messages', 'Messages'],
+  ['contact', 'Contact details'],
+  ['pharmacy', 'Pharmacy'],
+  ['orders', 'Orders'],
+  ['results', 'Results'],
+  ['notes', "Doctor's notes"],
+];
+
+const emptyProfile = {
+  phone: '',
+  address: '',
+  city: '',
+  state: '',
+  zip: '',
+  dob: '',
+  pharmacy_name: '',
+  pharmacy_phone: '',
+  pharmacy_address: '',
+};
+
+export function PatientScreen({ visit, onHome, onAbout, onOffice, onBook, account, onAccount, onSignOut }) {
   const [token, setToken] = useState(patientToken);
   const [mode, setMode] = useState('signin');
   const [name, setName] = useState('');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
-  const [account, setAccount] = useState(null);
+  const [profile, setProfile] = useState(emptyProfile);
+  const [savedEmail, setSavedEmail] = useState('');
   const [visits, setVisits] = useState([]);
-  const [selected, setSelected] = useState('');
-  const [note, setNote] = useState('');
+  const [section, setSection] = useState('orders');
+  const [unread, setUnread] = useState(0);
   const [notice, setNotice] = useState('');
 
   useEffect(() => {
@@ -44,43 +83,53 @@ export function PatientScreen({ visit, onHome, onAbout, onOffice, onBook }) {
     }
     patientVisits(token)
       .then((payload) => {
-        setAccount({ name: payload.name, email: payload.email });
-        setVisits(payload.visits || []);
+        applyPayload(payload);
         if (visit) {
           onBook(visit);
         }
       })
       .catch(() => {
-        window.sessionStorage.removeItem(TOKEN_KEY);
+        forgetPatient();
         setToken('');
+        onAccount(null);
       });
   }, [token]);
+
+  function applyPayload(payload) {
+    setSavedEmail(payload.email || '');
+    setProfile({ ...emptyProfile, ...payload });
+    setVisits(payload.visits || []);
+    setUnread(payload.unread || 0);
+    onAccount({ name: payload.name, email: payload.email });
+  }
 
   async function submit() {
     setError('');
     try {
-      const result =
-        mode === 'signup'
-          ? await patientSignup({ name, email, password })
-          : await patientLogin(email, password);
-      storeToken(result.token);
+      const result = mode === 'signup' ? await patientSignup({ name, email, password }) : await patientLogin(email, password);
+      rememberPatient(result);
+      onAccount({ name: result.name, email: result.email });
       setToken(result.token);
     } catch (err) {
       setError(err.message);
     }
   }
 
-  function signOut() {
-    window.sessionStorage.removeItem(TOKEN_KEY);
-    setToken('');
-    setAccount(null);
-    setVisits([]);
-    setSelected('');
+  async function refresh() {
+    applyPayload(await patientVisits(token));
   }
 
-  async function refresh() {
-    const payload = await patientVisits(token);
-    setVisits(payload.visits || []);
+  async function openMessages() {
+    setSection('messages');
+    if (!unread) {
+      return;
+    }
+    applyPayload(await patientRead(token));
+  }
+
+  async function saveProfile() {
+    applyPayload(await patientProfile(token, profile));
+    setNotice('Saved.');
   }
 
   async function upload(visitId) {
@@ -90,120 +139,223 @@ export function PatientScreen({ visit, onHome, onAbout, onOffice, onBook }) {
     }
     await patientDocument(token, { visit_id: visitId, ...file });
     await refresh();
-    setNotice('Document added to this visit.');
+    setNotice('Document added to this order.');
   }
 
-  async function send(visitId) {
-    if (!note.trim()) {
-      return;
-    }
-    await patientMessage(token, visitId, note.trim());
-    setNote('');
+  async function send(visitId, text) {
+    await patientMessage(token, visitId, text);
     await refresh();
   }
 
-  const current = visits.find((item) => item.id === selected);
+  const header = (
+    <SiteHeader onHome={onHome} onAbout={onAbout} onOffice={onOffice} onPortal={() => {}} account={account} onSignOut={onSignOut} />
+  );
 
-  return (
-    <ScrollView style={styles.page} contentContainerStyle={styles.content}>
-      <SiteHeader onHome={onHome} onAbout={onAbout} onOffice={onOffice} />
-      <View style={styles.body}>
-        <Text style={styles.title}>Patient portal</Text>
-        {!token || !account ? (
-          <View style={styles.panel}>
+  if (!token) {
+    return (
+      <ScrollView style={styles.page} contentContainerStyle={styles.content}>
+        {header}
+        <View style={styles.authWrap}>
+          <View style={styles.authCard}>
+            <Text style={styles.title}>{mode === 'signup' ? 'Create your account' : 'Sign in'}</Text>
             <Text style={styles.copy}>
               {visit
-                ? 'Sign in to book this visit. Your order, uploads, and messages stay on this account.'
-                : 'Sign in to see your orders, uploads, results, and messages.'}
+                ? 'Sign in to continue this booking. Your name stays on the screen while you book.'
+                : 'Your orders, results, messages, and pharmacy details live here.'}
             </Text>
-            <View style={styles.tabs}>
+            <View style={styles.segment}>
               {[
                 ['signin', 'Sign in'],
                 ['signup', 'Sign up'],
               ].map(([key, label]) => (
-                <Pressable key={key} onPress={() => setMode(key)} style={[styles.tab, mode === key && styles.tabOn]}>
-                  <Text style={[styles.tabText, mode === key && styles.tabTextOn]}>{label}</Text>
+                <Pressable key={key} onPress={() => setMode(key)} style={[styles.segmentItem, mode === key && styles.segmentOn]}>
+                  <Text style={[styles.segmentText, mode === key && styles.segmentTextOn]}>{label}</Text>
                 </Pressable>
               ))}
             </View>
-            {mode === 'signup' ? <Field label="Name" value={name} onChangeText={setName} /> : null}
+            {mode === 'signup' ? <Field label="Full name" value={name} onChangeText={setName} /> : null}
             <Field label="Email" value={email} autoCapitalize="none" onChangeText={setEmail} />
-            <Field label="Password" value={password} secureTextEntry onChangeText={setPassword} />
+            <Field label="Password" value={password} secureTextEntry placeholder="At least 8 characters" onChangeText={setPassword} />
             {error ? <Text style={styles.error}>{error}</Text> : null}
             <Pressable onPress={submit} style={styles.button}>
               <Text style={styles.buttonText}>{mode === 'signup' ? 'Create account' : 'Sign in'}</Text>
             </Pressable>
           </View>
-        ) : (
-          <View>
-            <View style={styles.testHead}>
-              <View style={styles.grow}>
-                <Text style={styles.heading}>{account.name}</Text>
-                <Text style={styles.copy}>{account.email}</Text>
+        </View>
+      </ScrollView>
+    );
+  }
+
+  return (
+    <ScrollView style={styles.page} contentContainerStyle={styles.content}>
+      {header}
+      <View style={styles.shell}>
+        <View style={styles.nav}>
+          <Text style={styles.navTitle}>Your care</Text>
+          {NAV.map(([key, label]) => (
+            <Pressable key={key} onPress={() => (key === 'messages' ? openMessages() : setSection(key))} style={[styles.navItem, section === key && styles.navOn]}>
+              <Text style={[styles.navText, section === key && styles.navTextOn]}>{label}</Text>
+              {key === 'messages' && unread > 0 ? (
+                <View style={styles.badge}>
+                  <Text style={styles.badgeText}>{unread}</Text>
+                </View>
+              ) : null}
+            </Pressable>
+          ))}
+        </View>
+        <View style={styles.main}>
+          {notice ? <Text style={styles.notice}>{notice}</Text> : null}
+          {section === 'messages' ? <Messages visits={visits} onSend={send} /> : null}
+          {section === 'contact' ? (
+            <ProfileCard
+              title="Contact details"
+              copy="This is the address and phone the care team uses for this account."
+              onSave={saveProfile}
+            >
+              <Field label="Email" value={savedEmail} editable={false} />
+              <Field label="Phone" value={profile.phone} onChangeText={(phone) => setProfile({ ...profile, phone })} />
+              <Field label="Date of birth" value={profile.dob} placeholder="mm/dd/yyyy" onChangeText={(dob) => setProfile({ ...profile, dob })} />
+              <Field label="Street address" value={profile.address} onChangeText={(address) => setProfile({ ...profile, address })} />
+              <View style={styles.row}>
+                <Field label="City" value={profile.city} onChangeText={(city) => setProfile({ ...profile, city })} />
+                <Field label="State" value={profile.state} onChangeText={(state) => setProfile({ ...profile, state })} />
+                <Field label="ZIP" value={profile.zip} onChangeText={(zip) => setProfile({ ...profile, zip })} />
               </View>
-              <Pressable onPress={signOut} style={styles.quiet}>
-                <Text style={styles.quietText}>Sign out</Text>
-              </Pressable>
-            </View>
-            {notice ? <Text style={styles.notice}>{notice}</Text> : null}
-            <Text style={styles.copy}>
-              Orders and files you add are visible to the care team for that visit. Results appear here when the care team adds them.
-            </Text>
-            {!visits.length ? (
-              <View style={styles.panel}>
-                <Text style={styles.panelTitle}>No visits yet</Text>
-                <Text style={styles.copy}>Book a test while signed in. The order will show up here.</Text>
-              </View>
-            ) : null}
-            {visits.map((item) => (
-              <Pressable key={item.id} onPress={() => setSelected(item.id === selected ? '' : item.id)} style={styles.panel}>
-                <Text style={styles.panelTitle}>{item.company || 'Visit'}</Text>
-                <Text style={styles.copy}>
-                  {item.appointment_date} {item.appointment_time}
-                </Text>
-                <Text style={styles.meta}>{(item.tests || []).join(', ') || 'No tests listed'} · Total {money(item.total)}</Text>
-              </Pressable>
-            ))}
-            {current ? (
-              <VisitDetail
-                visit={current}
-                note={note}
-                onNote={setNote}
-                onUpload={() => upload(current.id)}
-                onSend={() => send(current.id)}
-              />
-            ) : null}
-          </View>
-        )}
+            </ProfileCard>
+          ) : null}
+          {section === 'pharmacy' ? (
+            <ProfileCard title="Pharmacy" copy="Where prescriptions should be sent when a visit needs one." onSave={saveProfile}>
+              <Field label="Pharmacy name" value={profile.pharmacy_name} onChangeText={(pharmacy_name) => setProfile({ ...profile, pharmacy_name })} />
+              <Field label="Pharmacy phone" value={profile.pharmacy_phone} onChangeText={(pharmacy_phone) => setProfile({ ...profile, pharmacy_phone })} />
+              <Field label="Pharmacy address" value={profile.pharmacy_address} onChangeText={(pharmacy_address) => setProfile({ ...profile, pharmacy_address })} />
+            </ProfileCard>
+          ) : null}
+          {section === 'orders' ? <Orders visits={visits} onUpload={upload} /> : null}
+          {section === 'results' ? <Results visits={visits} /> : null}
+          {section === 'notes' ? <Notes visits={visits} /> : null}
+        </View>
       </View>
     </ScrollView>
   );
 }
 
-function VisitDetail({ visit, note, onNote, onUpload, onSend }) {
-  const orders = (visit.documents || []).filter((item) => item.kind === 'order');
-  const uploads = (visit.documents || []).filter((item) => item.kind === 'document');
-  const results = (visit.documents || []).filter((item) => item.kind === 'result');
+function Messages({ visits, onSend }) {
   return (
     <View style={styles.panel}>
-      <Text style={styles.panelTitle}>This visit</Text>
-      <Text style={styles.meta}>{visit.order_source === 'uploaded' ? 'You uploaded the order.' : 'Reya created the order.'}</Text>
-      <FileList title="Order" files={orders} />
-      <FileList title="Your documents" files={uploads} empty="No extra documents yet." />
-      <Pressable onPress={onUpload} style={styles.ghost}>
-        <Text style={styles.ghostText}>Upload a PDF or image</Text>
-      </Pressable>
-      <FileList title="Results" files={results} empty="Results will appear here when they are returned." />
-      <Text style={styles.subheading}>Messages</Text>
-      {(visit.messages || []).map((message) => (
-        <View key={message.id} style={styles.message}>
+      <Text style={styles.panelTitle}>Messages</Text>
+      <Text style={styles.copy}>A new message from the care team shows as a gray number on Messages.</Text>
+      {!visits.length ? <Text style={styles.meta}>Book a visit to start a conversation.</Text> : null}
+      {visits.map((item) => (
+        <Thread key={item.id} item={item} onSend={onSend} />
+      ))}
+    </View>
+  );
+}
+
+function Thread({ item, onSend }) {
+  const [note, setNote] = useState('');
+  return (
+    <View style={styles.thread}>
+      <Text style={styles.subheading}>{item.company || 'Visit'} · {item.appointment_date}</Text>
+      {(item.messages || []).length ? null : <Text style={styles.meta}>No messages yet.</Text>}
+      {(item.messages || []).map((message) => (
+        <View key={message.id} style={[styles.bubble, message.by === 'office' ? styles.bubbleOffice : styles.bubbleMine]}>
           <Text style={styles.meta}>{message.author} · {message.created}</Text>
           <Text style={styles.copy}>{message.body}</Text>
         </View>
       ))}
-      <Field label="Message the care team" value={note} multiline onChangeText={onNote} />
-      <Pressable onPress={onSend} style={styles.button}>
-        <Text style={styles.buttonText}>Send message</Text>
+      <Field label="Write a message" value={note} multiline onChangeText={setNote} />
+      <Pressable
+        onPress={() => {
+          if (!note.trim()) {
+            return;
+          }
+          const text = note.trim();
+          setNote('');
+          onSend(item.id, text);
+        }}
+        style={styles.button}
+      >
+        <Text style={styles.buttonText}>Send</Text>
+      </Pressable>
+    </View>
+  );
+}
+
+function Orders({ visits, onUpload }) {
+  return (
+    <View>
+      <Text style={styles.panelTitle}>Orders</Text>
+      {!visits.length ? (
+        <View style={styles.panel}>
+          <Text style={styles.copy}>No orders yet. Book a test while you are signed in and it will appear here.</Text>
+        </View>
+      ) : null}
+      {visits.map((item) => {
+        const orders = (item.documents || []).filter((file) => file.kind === 'order');
+        const uploads = (item.documents || []).filter((file) => file.kind === 'document');
+        return (
+          <View key={item.id} style={styles.panel}>
+            <Text style={styles.panelTitle}>{item.company || 'Visit'}</Text>
+            <Text style={styles.copy}>{item.appointment_date} {item.appointment_time}</Text>
+            <Text style={styles.meta}>{(item.tests || []).join(', ') || 'No tests listed'} · Total {money(item.total)}</Text>
+            <Text style={styles.meta}>{item.order_source === 'uploaded' ? 'You uploaded this order.' : 'Reya created this order.'}</Text>
+            <FileList title="Order" files={orders} />
+            <FileList title="Documents you added" files={uploads} empty="No extra documents yet." />
+            <Pressable onPress={() => onUpload(item.id)} style={styles.ghost}>
+              <Text style={styles.ghostText}>Upload a PDF or image</Text>
+            </Pressable>
+          </View>
+        );
+      })}
+    </View>
+  );
+}
+
+function Results({ visits }) {
+  const rows = visits.flatMap((item) =>
+    (item.documents || []).filter((file) => file.kind === 'result').map((file) => ({ ...file, visit: item.company, when: item.appointment_date }))
+  );
+  return (
+    <View style={styles.panel}>
+      <Text style={styles.panelTitle}>Results</Text>
+      <Text style={styles.copy}>Results show up here after the care team adds them to your visit.</Text>
+      {!rows.length ? <Text style={styles.meta}>No results yet.</Text> : null}
+      {rows.map((file) => (
+        <Pressable key={file.id} onPress={() => window.open(fileLink(file), '_blank', 'noopener')} style={styles.linkRow}>
+          <Text style={styles.link}>{file.name}</Text>
+          <Text style={styles.meta}>{file.visit} · {file.when}</Text>
+        </Pressable>
+      ))}
+    </View>
+  );
+}
+
+function Notes({ visits }) {
+  const rows = visits.flatMap((item) => (item.notes || []).map((note) => ({ ...note, visit: item.company })));
+  return (
+    <View style={styles.panel}>
+      <Text style={styles.panelTitle}>Doctor's notes</Text>
+      <Text style={styles.copy}>Notes from the care team for your visits.</Text>
+      {!rows.length ? <Text style={styles.meta}>No notes yet.</Text> : null}
+      {rows.map((note) => (
+        <View key={note.id} style={styles.thread}>
+          <Text style={styles.meta}>{note.visit} · {note.author} · {note.created}</Text>
+          <Text style={styles.copy}>{note.body}</Text>
+        </View>
+      ))}
+    </View>
+  );
+}
+
+function ProfileCard({ title, copy, onSave, children }) {
+  return (
+    <View style={styles.panel}>
+      <Text style={styles.panelTitle}>{title}</Text>
+      <Text style={styles.copy}>{copy}</Text>
+      {children}
+      <Pressable onPress={onSave} style={styles.button}>
+        <Text style={styles.buttonText}>Save</Text>
       </Pressable>
     </View>
   );
@@ -215,11 +367,7 @@ function FileList({ title, files, empty }) {
       <Text style={styles.subheading}>{title}</Text>
       {!files.length && empty ? <Text style={styles.meta}>{empty}</Text> : null}
       {files.map((file) => (
-        <Pressable
-          key={file.id}
-          onPress={() => window.open(fileLink(file), '_blank', 'noopener')}
-          style={styles.linkRow}
-        >
+        <Pressable key={file.id} onPress={() => window.open(fileLink(file), '_blank', 'noopener')} style={styles.linkRow}>
           <Text style={styles.link}>{file.name}</Text>
         </Pressable>
       ))}
@@ -231,8 +379,7 @@ function fileLink(file) {
   if (file.kind === 'order' && file.order_id) {
     return `${API_URL}/orders/${file.order_id}`;
   }
-  const token = patientToken();
-  return `${API_URL}/patient/files/${file.id}?token=${encodeURIComponent(token)}`;
+  return `${API_URL}/patient/files/${file.id}?token=${encodeURIComponent(patientToken())}`;
 }
 
 function pickFile() {
@@ -271,37 +418,47 @@ function Field({ label, ...props }) {
 }
 
 const styles = StyleSheet.create({
-  page: { flex: 1, backgroundColor: '#F6F3F8' },
-  content: { paddingBottom: 64 },
-  body: { maxWidth: 880, width: '100%', alignSelf: 'center', paddingHorizontal: 24, paddingTop: 28 },
-  title: { fontFamily: font, fontSize: 32, fontWeight: '700', color: colors.ink },
-  heading: { fontFamily: font, fontSize: 26, fontWeight: '700', color: colors.ink },
-  panel: { marginTop: 14, backgroundColor: colors.white, borderWidth: 1, borderColor: colors.line, borderRadius: 16, padding: 20 },
-  panelTitle: { fontFamily: font, fontSize: 18, fontWeight: '700', color: colors.ink },
-  subheading: { fontFamily: font, fontSize: 16, fontWeight: '700', color: colors.ink, marginTop: 16 },
-  copy: { fontFamily: font, color: colors.muted, marginTop: 6, lineHeight: 22, fontSize: 14 },
+  page: { flex: 1, backgroundColor: '#F4F1F6' },
+  content: { paddingBottom: 48 },
+  authWrap: { alignItems: 'center', padding: 24 },
+  authCard: { width: '100%', maxWidth: 460, marginTop: 28, backgroundColor: colors.white, borderWidth: 1, borderColor: colors.line, borderRadius: 20, padding: 28 },
+  title: { fontFamily: font, fontSize: 30, fontWeight: '700', color: colors.ink },
+  shell: { flexDirection: 'row', flexWrap: 'wrap', alignItems: 'flex-start', maxWidth: 1100, width: '100%', alignSelf: 'center', padding: 20, gap: 16 },
+  nav: { width: 240, backgroundColor: colors.white, borderWidth: 1, borderColor: colors.line, borderRadius: 16, padding: 12 },
+  navTitle: { fontFamily: font, fontWeight: '700', color: colors.muted, fontSize: 12, letterSpacing: 0.4, paddingHorizontal: 10, paddingVertical: 8 },
+  navItem: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', borderRadius: 10, paddingHorizontal: 12, paddingVertical: 12 },
+  navOn: { backgroundColor: '#EFE7F6' },
+  navText: { fontFamily: font, color: colors.ink, fontWeight: '600', fontSize: 15 },
+  navTextOn: { color: colors.purple },
+  badge: { minWidth: 22, height: 22, borderRadius: 11, backgroundColor: '#D0D0D0', alignItems: 'center', justifyContent: 'center', paddingHorizontal: 6 },
+  badgeText: { fontFamily: font, color: '#333', fontSize: 12, fontWeight: '700' },
+  main: { flexGrow: 1, flexBasis: 320, minWidth: 280 },
+  panel: { marginTop: 12, backgroundColor: colors.white, borderWidth: 1, borderColor: colors.line, borderRadius: 16, padding: 20 },
+  panelTitle: { fontFamily: font, fontSize: 22, fontWeight: '700', color: colors.ink },
+  subheading: { fontFamily: font, fontSize: 16, fontWeight: '700', color: colors.ink, marginTop: 14 },
+  copy: { fontFamily: font, color: colors.ink, marginTop: 6, lineHeight: 22, fontSize: 14 },
   meta: { fontFamily: font, color: colors.muted, fontSize: 12, marginTop: 4 },
-  tabs: { flexDirection: 'row', gap: 8, marginTop: 16 },
-  tab: { borderWidth: 1, borderColor: colors.line, borderRadius: 999, paddingHorizontal: 16, paddingVertical: 10, backgroundColor: colors.white },
-  tabOn: { backgroundColor: colors.purple, borderColor: colors.purple },
-  tabText: { fontFamily: font, color: colors.ink, fontWeight: '600' },
-  tabTextOn: { color: colors.white },
-  field: { marginTop: 12 },
+  segment: { flexDirection: 'row', alignSelf: 'flex-start', marginTop: 16, borderWidth: 1, borderColor: colors.line, borderRadius: 12, overflow: 'hidden' },
+  segmentItem: { paddingHorizontal: 16, paddingVertical: 10, backgroundColor: colors.white },
+  segmentOn: { backgroundColor: colors.purple },
+  segmentText: { fontFamily: font, color: colors.ink, fontWeight: '600' },
+  segmentTextOn: { color: colors.white },
+  field: { marginTop: 12, flexGrow: 1, minWidth: 120 },
   label: { fontFamily: font, fontWeight: '600', color: colors.ink, fontSize: 13, marginBottom: 6 },
   input: { borderWidth: 1, borderColor: colors.line, borderRadius: 12, paddingHorizontal: 14, paddingVertical: 12, fontFamily: font, fontSize: 15, color: colors.ink, backgroundColor: '#FCFBFD', outlineStyle: 'none' },
   inputShort: { minHeight: 72, textAlignVertical: 'top' },
-  button: { marginTop: 14, alignSelf: 'flex-start', backgroundColor: colors.purple, borderRadius: 12, paddingHorizontal: 18, paddingVertical: 12 },
+  row: { flexDirection: 'row', flexWrap: 'wrap', gap: 12 },
+  button: { marginTop: 16, alignSelf: 'flex-start', backgroundColor: colors.purple, borderRadius: 12, paddingHorizontal: 18, paddingVertical: 12 },
   buttonText: { fontFamily: font, color: colors.white, fontWeight: '700' },
-  ghost: { marginTop: 12, alignSelf: 'flex-start', borderWidth: 1, borderColor: colors.line, borderRadius: 12, paddingHorizontal: 16, paddingVertical: 12 },
+  ghost: { marginTop: 12, alignSelf: 'flex-start', borderWidth: 1, borderColor: colors.line, borderRadius: 12, paddingHorizontal: 16, paddingVertical: 12, backgroundColor: colors.white },
   ghostText: { fontFamily: font, color: colors.ink, fontWeight: '700' },
-  quiet: { padding: 8 },
-  quietText: { fontFamily: font, color: colors.purple, fontWeight: '700' },
   error: { fontFamily: font, color: '#B42318', marginTop: 10 },
-  notice: { fontFamily: font, color: colors.ink, marginTop: 16, backgroundColor: '#EFE7F6', borderRadius: 12, padding: 12 },
-  testHead: { flexDirection: 'row', alignItems: 'flex-start', justifyContent: 'space-between', marginTop: 8 },
-  grow: { flex: 1 },
+  notice: { fontFamily: font, color: colors.ink, backgroundColor: '#EFE7F6', borderRadius: 12, padding: 12, marginBottom: 8 },
   block: { marginTop: 8 },
-  linkRow: { marginTop: 8 },
+  linkRow: { marginTop: 10 },
   link: { fontFamily: font, color: colors.purple, fontWeight: '700' },
-  message: { marginTop: 10, paddingTop: 8, borderTopWidth: 1, borderTopColor: colors.line },
+  thread: { marginTop: 16, paddingTop: 12, borderTopWidth: 1, borderTopColor: colors.line },
+  bubble: { marginTop: 8, borderRadius: 12, padding: 12 },
+  bubbleMine: { backgroundColor: '#F6F3F8' },
+  bubbleOffice: { backgroundColor: '#EEF3FB' },
 });

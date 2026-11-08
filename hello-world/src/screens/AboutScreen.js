@@ -2,10 +2,10 @@ import { Pressable, StyleSheet, Text, View } from 'react-native';
 import { SiteHeader } from '../SiteHeader';
 import { colors, font } from '../theme';
 
-export function AboutScreen({ onHome }) {
+export function AboutScreen({ onHome, account, onPortal, onSignOut }) {
   return (
     <View style={styles.page}>
-      <SiteHeader onHome={onHome} onAbout={() => {}} aboutActive />
+      <SiteHeader onHome={onHome} onAbout={() => {}} aboutActive account={account} onPortal={onPortal} onSignOut={onSignOut} />
       <View style={styles.body}>
         <Pressable onPress={onHome}>
           <Text style={styles.back}>← Back</Text>

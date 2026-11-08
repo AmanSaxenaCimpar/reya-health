@@ -1,21 +1,9 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 import { API_URL, loadImaging, loadLabs, loadQuestionnaires, loadQuote, saveBooking } from '../api';
 import { patientToken } from './PatientScreen';
 import { SiteHeader } from '../SiteHeader';
 import { colors, font, money } from '../theme';
-
-const times = ['8:00 AM', '9:30 AM', '11:00 AM', '1:00 PM', '2:30 PM'];
-
-function upcomingDates() {
-  const start = new Date();
-  start.setDate(start.getDate() + 2);
-  return Array.from({ length: 8 }, (_, index) => {
-    const date = new Date(start);
-    date.setDate(start.getDate() + index);
-    return date;
-  });
-}
 
 function formatDate(date) {
   return date.toLocaleDateString('en-US', {
@@ -119,8 +107,7 @@ function answered(question, answers) {
   return Boolean(value);
 }
 
-export function BookingScreen({ visit, onHome, onAbout, onBack }) {
-  const dates = useMemo(() => upcomingDates(), []);
+export function BookingScreen({ visit, onHome, onAbout, onBack, account, onPortal, onSignOut }) {
   const [labs, setLabs] = useState([]);
   const [imaging, setImaging] = useState([]);
   const [sections, setSections] = useState([]);
@@ -340,7 +327,7 @@ export function BookingScreen({ visit, onHome, onAbout, onBack }) {
 
   if (done) {
     return (
-      <Page onHome={onHome} onAbout={onAbout}>
+      <Page onHome={onHome} onAbout={onAbout} account={account} onPortal={onPortal} onSignOut={onSignOut}>
         <Pressable onPress={() => setDone(false)} style={styles.backButton}>
           <Text style={styles.back}>← Back</Text>
         </Pressable>
@@ -370,7 +357,7 @@ export function BookingScreen({ visit, onHome, onAbout, onBack }) {
   }
 
   return (
-    <Page onHome={onHome} onAbout={onAbout}>
+    <Page onHome={onHome} onAbout={onAbout} account={account} onPortal={onPortal} onSignOut={onSignOut}>
       <Pressable onPress={back} style={styles.backButton}>
         <Text style={styles.back}>← Back</Text>
       </Pressable>
@@ -505,27 +492,12 @@ export function BookingScreen({ visit, onHome, onAbout, onBack }) {
       {stepKey === 'schedule' ? (
         <View>
           <Text style={styles.title}>Schedule</Text>
-          <Text style={styles.copy}>Choose a date and time. Same-day and next-day visits are not available.</Text>
-          <Text style={styles.label}>Date</Text>
+          <Text style={styles.copy}>Choose a date on the calendar, then a time. Same-day and next-day visits are not available. Times are Central Time.</Text>
+          <MonthCalendar date={date} onSelect={setDate} />
+          <Text style={styles.label}>Time</Text>
           <View style={styles.wrap}>
-            {dates.map((item) => (
-              <Pressable
-                key={item.toISOString()}
-                onPress={() => setDate(item)}
-                style={[styles.chip, date && formatDate(date) === formatDate(item) && styles.chipOn]}
-              >
-                <Text style={styles.chipText}>{formatDate(item)}</Text>
-              </Pressable>
-            ))}
-          </View>
-          <Text style={styles.label}>Time · Central Time (Chicago)</Text>
-          <View style={styles.wrap}>
-            {times.map((item) => (
-              <Pressable
-                key={item}
-                onPress={() => setTime(item)}
-                style={[styles.chip, time === item && styles.chipOn]}
-              >
+            {timeSlots().map((item) => (
+              <Pressable key={item} onPress={() => setTime(item)} style={[styles.chip, time === item && styles.chipOn]}>
                 <Text style={styles.chipText}>{item}</Text>
               </Pressable>
             ))}
@@ -816,10 +788,90 @@ function QuestionBlock({ question, value, onChange }) {
   );
 }
 
-function Page({ children, onHome, onAbout }) {
+function startOfDay(date) {
+  return new Date(date.getFullYear(), date.getMonth(), date.getDate());
+}
+
+function addDays(date, count) {
+  const next = new Date(date);
+  next.setDate(next.getDate() + count);
+  return next;
+}
+
+function timeSlots() {
+  const slots = [];
+  for (let hour = 8; hour <= 16; hour += 1) {
+    for (const minute of [0, 30]) {
+      if (hour === 16 && minute === 30) {
+        continue;
+      }
+      const suffix = hour >= 12 ? 'PM' : 'AM';
+      const shown = hour % 12 || 12;
+      slots.push(`${shown}:${String(minute).padStart(2, '0')} ${suffix}`);
+    }
+  }
+  return slots;
+}
+
+function MonthCalendar({ date, onSelect }) {
+  const earliest = startOfDay(addDays(new Date(), 2));
+  const latest = startOfDay(addDays(earliest, 60));
+  const [cursor, setCursor] = useState(date || earliest);
+  const year = cursor.getFullYear();
+  const month = cursor.getMonth();
+  const first = new Date(year, month, 1);
+  const count = new Date(year, month + 1, 0).getDate();
+  const cells = [...Array(first.getDay()).fill(null), ...Array.from({ length: count }, (_, index) => new Date(year, month, index + 1))];
+  const title = cursor.toLocaleDateString('en-US', { month: 'long', year: 'numeric' });
+  return (
+    <View style={styles.calendar}>
+      <View style={styles.calendarHead}>
+        <Pressable onPress={() => setCursor(new Date(year, month - 1, 1))} style={styles.calendarNav}>
+          <Text style={styles.calendarNavText}>‹</Text>
+        </Pressable>
+        <Text style={styles.calendarTitle}>{title}</Text>
+        <Pressable onPress={() => setCursor(new Date(year, month + 1, 1))} style={styles.calendarNav}>
+          <Text style={styles.calendarNavText}>›</Text>
+        </Pressable>
+      </View>
+      <View style={styles.calendarWeek}>
+        {['S', 'M', 'T', 'W', 'T', 'F', 'S'].map((label, index) => (
+          <Text key={`${label}${index}`} style={styles.calendarDow}>{label}</Text>
+        ))}
+      </View>
+      <View style={styles.calendarGrid}>
+        {cells.map((item, index) => {
+          if (!item) {
+            return <View key={`empty-${index}`} style={styles.calendarDay} />;
+          }
+          const day = startOfDay(item);
+          const open = day >= earliest && day <= latest;
+          const selected = date && startOfDay(date).getTime() === day.getTime();
+          return (
+            <Pressable
+              key={item.toISOString()}
+              disabled={!open}
+              onPress={() => onSelect(item)}
+              style={[styles.calendarDay, selected && styles.calendarDayOn, !open && styles.calendarDayOff]}
+            >
+              <Text style={[styles.calendarDayText, selected && styles.calendarDayTextOn, !open && styles.calendarDayMuted]}>{item.getDate()}</Text>
+            </Pressable>
+          );
+        })}
+      </View>
+    </View>
+  );
+}
+
+function Page({ children, onHome, onAbout, account, onPortal, onSignOut }) {
   return (
     <ScrollView style={styles.page} contentContainerStyle={styles.content}>
-      <SiteHeader onHome={onHome} onAbout={onAbout} />
+      <SiteHeader onHome={onHome} onAbout={onAbout} onPortal={onPortal} account={account} onSignOut={onSignOut} />
+      {account ? (
+        <View style={styles.signedBar}>
+          <Text style={styles.signedText}>Booking as {account.name}</Text>
+        </View>
+      ) : null}
       <View style={styles.body}>{children}</View>
     </ScrollView>
   );
@@ -1040,7 +1092,23 @@ const styles = StyleSheet.create({
     paddingVertical: 10,
     cursor: 'pointer',
   },
-  chipOn: { borderColor: colors.purple, borderWidth: 1.5 },
+  chipOn: { borderColor: colors.purple, borderWidth: 1.5, backgroundColor: '#EFE7F6' },
+  signedBar: { backgroundColor: '#EFE7F6', paddingVertical: 8, paddingHorizontal: 28 },
+  signedText: { fontFamily: font, color: colors.ink, fontWeight: '600' },
+  calendar: { marginTop: 16, borderWidth: 1, borderColor: colors.line, borderRadius: 16, padding: 12, maxWidth: 420, backgroundColor: colors.white },
+  calendarHead: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
+  calendarTitle: { fontFamily: font, fontWeight: '700', color: colors.ink, fontSize: 16 },
+  calendarNav: { width: 36, height: 36, borderRadius: 18, alignItems: 'center', justifyContent: 'center', backgroundColor: '#F6F3F8' },
+  calendarNavText: { fontFamily: font, fontSize: 22, color: colors.ink },
+  calendarWeek: { flexDirection: 'row', marginTop: 12 },
+  calendarDow: { width: '14.28%', textAlign: 'center', fontFamily: font, color: colors.muted, fontSize: 12, fontWeight: '700' },
+  calendarGrid: { flexDirection: 'row', flexWrap: 'wrap' },
+  calendarDay: { width: '14.28%', aspectRatio: 1, alignItems: 'center', justifyContent: 'center', borderRadius: 20 },
+  calendarDayOn: { backgroundColor: colors.purple },
+  calendarDayOff: { opacity: 0.35 },
+  calendarDayText: { fontFamily: font, color: colors.ink, fontWeight: '600' },
+  calendarDayTextOn: { color: colors.white },
+  calendarDayMuted: { color: colors.muted },
   chipText: { fontFamily: font, color: colors.ink },
   field: { flex: 1, minWidth: 220 },
   input: {

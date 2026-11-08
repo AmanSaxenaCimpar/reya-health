@@ -37,10 +37,13 @@ from orders import OrderError, prepare_order, read_order
 from patients import (
     PatientError,
     account_from_token,
+    add_doctor_note,
     add_document,
     add_message,
     add_office_message,
     add_office_result,
+    mark_messages_read,
+    update_profile,
     login as patient_login,
     read_document,
     record_visit,
@@ -612,6 +615,18 @@ class PatientNote(BaseModel):
     body: str = ""
 
 
+class PatientProfile(BaseModel):
+    phone: str = ""
+    address: str = ""
+    city: str = ""
+    state: str = ""
+    zip: str = ""
+    dob: str = ""
+    pharmacy_name: str = ""
+    pharmacy_phone: str = ""
+    pharmacy_address: str = ""
+
+
 def require_patient(token: str) -> dict:
     try:
         return account_from_token(token)
@@ -655,6 +670,24 @@ def patient_document(body: PatientFile, token: str = Query(...)):
         raise HTTPException(status_code=400, detail=str(error)) from None
 
 
+@app.put("/patient/profile")
+def patient_profile(body: PatientProfile, token: str = Query(...)):
+    require_patient(token)
+    try:
+        return update_profile(token, body.model_dump())
+    except PatientError as error:
+        raise HTTPException(status_code=400, detail=str(error)) from None
+
+
+@app.post("/patient/messages/read")
+def patient_messages_read(token: str = Query(...)):
+    require_patient(token)
+    try:
+        return mark_messages_read(token)
+    except PatientError as error:
+        raise HTTPException(status_code=401, detail=str(error)) from None
+
+
 @app.post("/patient/messages")
 def patient_message(body: PatientNote, token: str = Query(...)):
     require_patient(token)
@@ -681,6 +714,15 @@ def patient_file(doc_id: str, token: str = Query(...)):
 def office_patients(token: str = Query(...)):
     office = require_office(token)
     return {"visits": visits_for_business(office["id"])}
+
+
+@app.post("/office/notes")
+def office_note(body: PatientNote, token: str = Query(...)):
+    office = require_office(token)
+    try:
+        return add_doctor_note(body.visit_id, office["id"], office.get("name") or "Care team", body.body)
+    except PatientError as error:
+        raise HTTPException(status_code=400, detail=str(error)) from None
 
 
 @app.post("/office/messages")
