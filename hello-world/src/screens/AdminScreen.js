@@ -35,6 +35,7 @@ export function AdminScreen({ onHome, onAbout }) {
   const [business, setBusiness] = useState({ name: '', email: '', service: 'lab' });
   const [invite, setInvite] = useState({ name: '', email: '', role: 'provider' });
   const [notice, setNotice] = useState('');
+  const [section, setSection] = useState('general');
 
   useEffect(() => {
     if (!token) {
@@ -183,7 +184,24 @@ export function AdminScreen({ onHome, onAbout }) {
             <Text style={styles.copy}>
               This login edits only {catalog.business_name}: its tests, test details, questionnaires, mileage prices, and its own staff logins.
             </Text>
-            <Panel title="General questionnaire">
+            <View style={styles.tabs}>
+              {[
+                ['general', 'General questionnaire'],
+                ['service', 'Service questions'],
+                ['tests', 'Add a service'],
+                ['pricing', 'Pricing'],
+              ].map(([key, label]) => (
+                <Pressable
+                  key={key}
+                  onPress={() => setSection(key)}
+                  style={[styles.tab, section === key && styles.tabOn]}
+                >
+                  <Text style={[styles.tabText, section === key && styles.tabTextOn]}>{label}</Text>
+                </Pressable>
+              ))}
+            </View>
+
+            <View style={section === 'general' ? styles.section : styles.hidden}>
               <Text style={styles.copy}>These questions appear after patient information on this service only.</Text>
               <QuestionEditor
                 questions={catalog.general_questions || []}
@@ -192,10 +210,10 @@ export function AdminScreen({ onHome, onAbout }) {
                   setNotice('General questions saved.');
                 }}
               />
-            </Panel>
+            </View>
 
-            <Panel title="Service questions">
-              <Text style={styles.copy}>Questions tied to this service’s tests. Each group scrolls inside this section.</Text>
+            <View style={section === 'service' ? styles.section : styles.hidden}>
+              <Text style={styles.copy}>Questions tied to this service’s tests.</Text>
               {(catalog.question_groups || []).map((group) => (
                 <View key={group.key} style={styles.group}>
                   <Text style={styles.subheading}>{group.title}</Text>
@@ -208,9 +226,9 @@ export function AdminScreen({ onHome, onAbout }) {
                   />
                 </View>
               ))}
-            </Panel>
+            </View>
 
-            <Panel title="Add a service">
+            <View style={section === 'tests' ? styles.section : styles.hidden}>
               <Text style={styles.copy}>
                 Add or remove one {catalog.role} test, or upload a CSV or Excel file. The first row must be: code, name, kind, cpt, price. Every row is saved as {catalog.role}. Save the file from Excel as CSV if the workbook upload fails.
               </Text>
@@ -236,9 +254,9 @@ export function AdminScreen({ onHome, onAbout }) {
                   }}
                 />
               ))}
-            </Panel>
+            </View>
 
-            <Panel title="Pricing by distance">
+            <View style={section === 'pricing' ? styles.section : styles.hidden}>
               <Text style={styles.copy}>
                 A visit total is the selected test fees, plus one fixed transportation fee, plus the extra amount Z for the mile band. Service stops at the last band. Example: 10–25 miles adds $25, 25–50 miles adds $50, and anything past 50 miles is not served.
               </Text>
@@ -272,7 +290,7 @@ export function AdminScreen({ onHome, onAbout }) {
               <Pressable onPress={saveRule} style={styles.button}>
                 <Text style={styles.buttonText}>Save mileage rules</Text>
               </Pressable>
-            </Panel>
+            </View>
 
             <Text style={styles.heading}>Register a business</Text>
             <Text style={styles.copy}>
@@ -305,17 +323,6 @@ export function AdminScreen({ onHome, onAbout }) {
         )}
       </View>
     </ScrollView>
-  );
-}
-
-function Panel({ title, children }) {
-  return (
-    <View style={styles.panel}>
-      <Text style={styles.heading}>{title}</Text>
-      <ScrollView style={styles.panelScroll} contentContainerStyle={styles.panelContent} nestedScrollEnabled>
-        {children}
-      </ScrollView>
-    </View>
   );
 }
 
@@ -427,17 +434,21 @@ const styles = StyleSheet.create({
   content: { paddingBottom: 48 },
   body: { maxWidth: 880, width: '100%', alignSelf: 'center', padding: 24 },
   title: { fontFamily: font, fontSize: 32, fontWeight: '700', color: colors.ink },
-  panel: {
-    marginTop: 18,
+  heading: { fontFamily: font, fontSize: 22, fontWeight: '700', color: colors.ink, marginTop: 18 },
+  tabs: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginTop: 18 },
+  tab: {
     borderWidth: 1,
     borderColor: colors.line,
-    borderRadius: 14,
+    borderRadius: 999,
+    paddingHorizontal: 14,
+    paddingVertical: 10,
     backgroundColor: colors.white,
-    overflow: 'hidden',
   },
-  panelScroll: { maxHeight: 420 },
-  panelContent: { paddingHorizontal: 16, paddingBottom: 16 },
-  heading: { fontFamily: font, fontSize: 22, fontWeight: '700', color: colors.ink, padding: 16, paddingBottom: 0 },
+  tabOn: { backgroundColor: colors.purple, borderColor: colors.purple },
+  tabText: { fontFamily: font, color: colors.ink, fontWeight: '700' },
+  tabTextOn: { color: colors.white },
+  section: { marginTop: 8 },
+  hidden: { display: 'none' },
   subheading: { fontFamily: font, fontSize: 16, fontWeight: '700', color: colors.ink, marginTop: 16 },
   group: { marginTop: 8, paddingTop: 8, borderTopWidth: 1, borderTopColor: colors.line },
   copy: { fontFamily: font, color: colors.ink, marginTop: 8, lineHeight: 22 },
