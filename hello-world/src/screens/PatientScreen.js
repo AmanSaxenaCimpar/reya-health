@@ -221,15 +221,18 @@ export function PatientScreen({ visit, onHome, onAbout, onBook, account, onAccou
             {pendingEmail ? (
               <View>
                 {previewLink ? (
-                  <Text style={styles.copy}>
-                    Mail is not connected on this server yet, so the link is shown here. Once mail is connected, this link is only emailed.
-                  </Text>
-                ) : null}
-                {previewLink ? (
-                  <Pressable onPress={() => window.location.assign(previewLink)} style={styles.button}>
-                    <Text style={styles.buttonText}>Open confirmation link</Text>
-                  </Pressable>
-                ) : null}
+                  <View>
+                    <Text style={styles.copy}>
+                      No email was sent. Mail is not connected on this server yet, so use this confirmation link:
+                    </Text>
+                    <Text selectable style={styles.linkText}>{previewLink}</Text>
+                    <Pressable onPress={() => window.location.assign(previewLink)} style={styles.button}>
+                      <Text style={styles.buttonText}>Open confirmation link</Text>
+                    </Pressable>
+                  </View>
+                ) : (
+                  <Text style={styles.copy}>Check the inbox and spam folder for {pendingEmail}.</Text>
+                )}
                 <Pressable
                   onPress={async () => {
                     const result = await patientResend(pendingEmail);
@@ -550,6 +553,7 @@ const styles = StyleSheet.create({
   block: { marginTop: 8 },
   linkRow: { marginTop: 10 },
   link: { fontFamily: font, color: colors.purple, fontWeight: '700' },
+  linkText: { fontFamily: font, color: colors.purple, marginTop: 10, lineHeight: 22 },
   thread: { marginTop: 16, paddingTop: 12, borderTopWidth: 1, borderTopColor: colors.line },
   bubble: { marginTop: 8, borderRadius: 12, padding: 12 },
   bubbleMine: { backgroundColor: '#F6F3F8' },
