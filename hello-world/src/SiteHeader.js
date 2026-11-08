@@ -2,11 +2,16 @@ import { Pressable, StyleSheet, Text, View } from 'react-native';
 import { Brand } from './Brand';
 import { colors, font } from './theme';
 
-export function SiteHeader({ onHome, onAbout, onOffice, aboutActive }) {
+export function SiteHeader({ onHome, onAbout, onOffice, onPortal, aboutActive }) {
   return (
     <View style={styles.bar}>
       <Brand onPress={onHome} />
       <View style={styles.links}>
+        {onPortal ? (
+          <Pressable onPress={onPortal}>
+            <Text style={styles.about}>Patient portal</Text>
+          </Pressable>
+        ) : null}
         {onOffice ? (
           <Pressable onPress={onOffice}>
             <Text style={styles.about}>Back office</Text>

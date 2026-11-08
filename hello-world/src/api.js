@@ -48,11 +48,11 @@ export function loadImaging(business) {
   return getJson(`/imaging${query}`);
 }
 
-export async function saveBooking(booking) {
+export async function saveBooking(booking, token) {
   const response = await fetch(`${API_URL}/bookings`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(booking),
+    body: JSON.stringify(token ? { ...booking, patient_token: token } : booking),
   });
   const payload = await response.json().catch(() => ({}));
   if (!response.ok) {
@@ -146,6 +146,68 @@ export function registerBusiness(token, business) {
 
 export function inviteLogin(token, person) {
   return officeFetch('/office/invites', token, { method: 'POST', body: JSON.stringify(person) });
+}
+
+export function officePatients(token) {
+  return officeFetch('/office/patients', token);
+}
+
+export function officeMessage(token, visitId, body) {
+  return officeFetch('/office/messages', token, { method: 'POST', body: JSON.stringify({ visit_id: visitId, body }) });
+}
+
+export function officeResult(token, file) {
+  return officeFetch('/office/results', token, { method: 'POST', body: JSON.stringify(file) });
+}
+
+async function patientFetch(path, token, options = {}) {
+  const response = await fetch(`${API_URL}${path}${path.includes('?') ? '&' : '?'}token=${encodeURIComponent(token)}`, {
+    ...options,
+    headers: { 'Content-Type': 'application/json', ...(options.headers || {}) },
+  });
+  const payload = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    throw new Error(typeof payload.detail === 'string' ? payload.detail : 'Patient portal request failed.');
+  }
+  return payload;
+}
+
+export async function patientSignup(account) {
+  const response = await fetch(`${API_URL}/patient/signup`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(account),
+  });
+  const payload = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    throw new Error(typeof payload.detail === 'string' ? payload.detail : 'Could not create the account.');
+  }
+  return payload;
+}
+
+export async function patientLogin(email, password) {
+  const response = await fetch(`${API_URL}/patient/login`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ email, password }),
+  });
+  const payload = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    throw new Error(typeof payload.detail === 'string' ? payload.detail : 'Could not sign in.');
+  }
+  return payload;
+}
+
+export function patientVisits(token) {
+  return patientFetch('/patient/visits', token);
+}
+
+export function patientDocument(token, file) {
+  return patientFetch('/patient/documents', token, { method: 'POST', body: JSON.stringify(file) });
+}
+
+export function patientMessage(token, visitId, body) {
+  return patientFetch('/patient/messages', token, { method: 'POST', body: JSON.stringify({ visit_id: visitId, body }) });
 }
 
 export function loadQuestionnaires(labCodes = [], imagingCodes = [], service, business) {

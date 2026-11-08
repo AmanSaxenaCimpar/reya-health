@@ -1,10 +1,14 @@
 import { useEffect, useState } from 'react';
 import { Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 import {
+  API_URL,
   addOfficeTest,
   inviteLogin,
   officeCatalog,
   officeLogin,
+  officeMessage,
+  officePatients,
+  officeResult,
   removeOfficeTest,
   saveContent,
   savePrice,
@@ -34,6 +38,9 @@ export function AdminScreen({ onHome, onAbout }) {
   const [invite, setInvite] = useState({ name: '', email: '', role: 'provider' });
   const [notice, setNotice] = useState('');
   const [section, setSection] = useState('general');
+  const [patientVisits, setPatientVisits] = useState([]);
+  const [patientId, setPatientId] = useState('');
+  const [patientNote, setPatientNote] = useState('');
 
   useEffect(() => {
     if (!token) {
@@ -58,6 +65,15 @@ export function AdminScreen({ onHome, onAbout }) {
         setError(err.message);
       });
   }, [token]);
+
+  useEffect(() => {
+    if (!token || section !== 'patients') {
+      return;
+    }
+    officePatients(token)
+      .then((payload) => setPatientVisits(payload.visits || []))
+      .catch((err) => setNotice(err.message));
+  }, [token, section]);
 
   async function signIn() {
     setError('');
@@ -176,6 +192,7 @@ export function AdminScreen({ onHome, onAbout }) {
                 ['service', 'Service questions'],
                 ['tests', 'Add a service'],
                 ['pricing', 'Pricing'],
+                ['patients', 'Patients'],
               ].map(([key, label]) => (
                 <Pressable
                   key={key}
@@ -299,6 +316,24 @@ export function AdminScreen({ onHome, onAbout }) {
               </View>
             </View>
 
+            <View style={section === 'patients' ? styles.section : styles.hidden}>
+              <PatientDesk
+                visits={patientVisits}
+                selectedId={patientId}
+                note={patientNote}
+                token={token}
+                onSelect={setPatientId}
+                onNote={setPatientNote}
+                onChange={async (message) => {
+                  const payload = await officePatients(token);
+                  setPatientVisits(payload.visits || []);
+                  if (message) {
+                    setNotice(message);
+                  }
+                }}
+              />
+            </View>
+
             <View style={styles.panel}>
               <Text style={styles.panelTitle}>Staff logins</Text>
               <Text style={styles.copy}>
@@ -326,6 +361,106 @@ export function AdminScreen({ onHome, onAbout }) {
       </View>
     </ScrollView>
   );
+}
+
+function PatientDesk({ visits, selectedId, note, token, onSelect, onNote, onChange }) {
+  const current = visits.find((item) => item.id === selectedId);
+  async function reply() {
+    if (!current || !note.trim()) {
+      return;
+    }
+    await officeMessage(token, current.id, note.trim());
+    onNote('');
+    await onChange('Message sent to the patient.');
+  }
+  async function addResult() {
+    if (!current) {
+      return;
+    }
+    const file = await pickOfficeFile();
+    if (!file) {
+      return;
+    }
+    await officeResult(token, { visit_id: current.id, ...file });
+    await onChange('Result added. The patient can open it in the portal.');
+  }
+  return (
+    <View>
+      <View style={styles.panel}>
+        <Text style={styles.panelTitle}>Patient visits</Text>
+        <Text style={styles.copy}>
+          Orders, uploads, and messages for this business. Add a result here when it comes back. The patient sees it in the portal.
+        </Text>
+        {!visits.length ? <Text style={styles.meta}>No patient visits yet. A visit appears after someone books while signed in.</Text> : null}
+      </View>
+      {visits.map((item) => (
+        <Pressable key={item.id} onPress={() => onSelect(item.id === selectedId ? '' : item.id)} style={styles.panel}>
+          <Text style={styles.panelTitle}>{item.patient_name}</Text>
+          <Text style={styles.copy}>{item.patient_email}</Text>
+          <Text style={styles.meta}>
+            {item.appointment_date} {item.appointment_time} · {(item.tests || []).join(', ')}
+          </Text>
+        </Pressable>
+      ))}
+      {current ? (
+        <View style={styles.panel}>
+          <Text style={styles.panelTitle}>Visit files</Text>
+          {(current.documents || []).map((file) => (
+            <Pressable key={file.id} onPress={() => window.open(officeFileLink(file, token), '_blank', 'noopener')} style={styles.questionRow}>
+              <Text style={styles.copy}>{file.kind}: {file.name}</Text>
+            </Pressable>
+          ))}
+          <Pressable onPress={addResult} style={styles.ghost}>
+            <Text style={styles.ghostText}>Add a result PDF or image</Text>
+          </Pressable>
+          <Text style={styles.subheading}>Messages</Text>
+          {(current.messages || []).map((message) => (
+            <View key={message.id} style={styles.group}>
+              <Text style={styles.meta}>{message.author} · {message.created}</Text>
+              <Text style={styles.copy}>{message.body}</Text>
+            </View>
+          ))}
+          <Field label="Reply to the patient" value={note} multiline onChangeText={onNote} />
+          <Pressable onPress={reply} style={styles.button}>
+            <Text style={styles.buttonText}>Send reply</Text>
+          </Pressable>
+        </View>
+      ) : null}
+    </View>
+  );
+}
+
+function officeFileLink(file, token) {
+  if (file.kind === 'order' && file.order_id) {
+    return `${API_URL}/orders/${file.order_id}`;
+  }
+  return `${API_URL}/office/files/${file.id}?token=${encodeURIComponent(token)}`;
+}
+
+function pickOfficeFile() {
+  return new Promise((resolve) => {
+    const input = document.createElement('input');
+    input.type = 'file';
+    input.accept = '.pdf,image/jpeg,image/png,image/webp,image/gif';
+    input.onchange = () => {
+      const file = input.files?.[0];
+      if (!file) {
+        resolve(null);
+        return;
+      }
+      const reader = new FileReader();
+      reader.onload = () => {
+        const result = String(reader.result || '');
+        resolve({
+          name: file.name,
+          content_type: file.type || 'application/octet-stream',
+          content: result.includes(',') ? result.split(',')[1] : '',
+        });
+      };
+      reader.readAsDataURL(file);
+    };
+    input.click();
+  });
 }
 
 function PriceRow({ item, onSave, onRemove, onSaveContent }) {

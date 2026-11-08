@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 import { API_URL, loadImaging, loadLabs, loadQuestionnaires, loadQuote, saveBooking } from '../api';
+import { patientToken } from './PatientScreen';
 import { SiteHeader } from '../SiteHeader';
 import { colors, font, money } from '../theme';
 
@@ -325,7 +326,7 @@ export function BookingScreen({ visit, onHome, onAbout, onBack }) {
       service_fee: serviceFee,
       setup_fee: setupTotal,
       total,
-    })
+    }, patientToken())
       .then((result) => {
         setStored(Boolean(result.saved));
         setOrderLink(result.order_id ? `${API_URL}/orders/${result.order_id}` : '');

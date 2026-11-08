@@ -34,6 +34,21 @@ from portal_store import (
     set_price,
 )
 from orders import OrderError, prepare_order, read_order
+from patients import (
+    PatientError,
+    account_from_token,
+    add_document,
+    add_message,
+    add_office_message,
+    add_office_result,
+    login as patient_login,
+    read_document,
+    record_visit,
+    signup as patient_signup,
+    token_for,
+    visits_for_business,
+    visits_for_patient,
+)
 from sharepoint import SharePointError, configured, save_booking
 
 DIST = Path(__file__).resolve().parent.parent / "hello-world" / "dist"
@@ -527,6 +542,7 @@ class BookingRequest(BaseModel):
     order_file: str = ""
     order_content: str = ""
     order_content_type: str = ""
+    patient_token: str = ""
     appointment_date: str = ""
     appointment_time: str = ""
     labs: List[TestLine] = Field(default_factory=list)
@@ -548,20 +564,154 @@ def create_booking(booking: BookingRequest):
     if office and office.get("kind") == "imaging" and booking.labs:
         raise HTTPException(status_code=400, detail="This visit belongs to one business. Remove lab tests.")
     payload = booking.model_dump()
+    patient_token = payload.pop("patient_token", "")
     try:
         order = prepare_order(payload)
     except OrderError as error:
         raise HTTPException(status_code=400, detail=str(error)) from None
     payload.update(order)
-    result = {"saved": False, "reason": "not_configured", "order_id": order["order_id"], "order_file": order["order_file"]}
+    visit_id = ""
+    if patient_token:
+        try:
+            visit_id = record_visit(patient_token, payload, order)["id"]
+        except PatientError as error:
+            raise HTTPException(status_code=401, detail=str(error)) from None
+    result = {
+        "saved": False,
+        "reason": "not_configured",
+        "order_id": order["order_id"],
+        "order_file": order["order_file"],
+        "visit_id": visit_id,
+    }
     if not configured():
         return result
+    share_payload = {key: value for key, value in payload.items() if key != "patient_token"}
     try:
-        saved = save_booking(payload)
+        saved = save_booking(share_payload)
     except SharePointError as error:
         raise HTTPException(status_code=502, detail=str(error)) from None
-    saved.update(order_id=order["order_id"], order_file=order["order_file"])
+    saved.update(order_id=order["order_id"], order_file=order["order_file"], visit_id=visit_id)
     return saved
+
+
+class PatientAccount(BaseModel):
+    name: str = ""
+    email: str = ""
+    password: str = ""
+
+
+class PatientFile(BaseModel):
+    visit_id: str = ""
+    name: str = ""
+    content_type: str = ""
+    content: str = ""
+
+
+class PatientNote(BaseModel):
+    visit_id: str = ""
+    body: str = ""
+
+
+def require_patient(token: str) -> dict:
+    try:
+        return account_from_token(token)
+    except PatientError as error:
+        raise HTTPException(status_code=401, detail=str(error)) from None
+
+
+@app.post("/patient/signup")
+def patient_signup_route(body: PatientAccount):
+    try:
+        account = patient_signup(body.name, body.email, body.password)
+    except PatientError as error:
+        raise HTTPException(status_code=400, detail=str(error)) from None
+    return {**account, "token": token_for(account["id"])}
+
+
+@app.post("/patient/login")
+def patient_login_route(body: PatientAccount):
+    try:
+        account = patient_login(body.email, body.password)
+    except PatientError as error:
+        raise HTTPException(status_code=401, detail=str(error)) from None
+    return {**account, "token": token_for(account["id"])}
+
+
+@app.get("/patient/visits")
+def patient_visits(token: str = Query(...)):
+    require_patient(token)
+    try:
+        return visits_for_patient(token)
+    except PatientError as error:
+        raise HTTPException(status_code=401, detail=str(error)) from None
+
+
+@app.post("/patient/documents")
+def patient_document(body: PatientFile, token: str = Query(...)):
+    require_patient(token)
+    try:
+        return add_document(token, body.visit_id, body.name, body.content_type, body.content)
+    except PatientError as error:
+        raise HTTPException(status_code=400, detail=str(error)) from None
+
+
+@app.post("/patient/messages")
+def patient_message(body: PatientNote, token: str = Query(...)):
+    require_patient(token)
+    try:
+        return add_message(token, body.visit_id, body.body)
+    except PatientError as error:
+        raise HTTPException(status_code=400, detail=str(error)) from None
+
+
+@app.get("/patient/files/{doc_id}")
+def patient_file(doc_id: str, token: str = Query(...)):
+    require_patient(token)
+    try:
+        found = read_document(doc_id, token=token)
+    except PatientError as error:
+        raise HTTPException(status_code=404, detail=str(error)) from None
+    if found is None:
+        raise HTTPException(status_code=404, detail="That file is not available.")
+    path, name, content_type = found
+    return FileResponse(path, media_type=content_type, filename=name)
+
+
+@app.get("/office/patients")
+def office_patients(token: str = Query(...)):
+    office = require_office(token)
+    return {"visits": visits_for_business(office["id"])}
+
+
+@app.post("/office/messages")
+def office_message(body: PatientNote, token: str = Query(...)):
+    office = require_office(token)
+    try:
+        return add_office_message(body.visit_id, office["id"], office.get("name") or "Care team", body.body)
+    except PatientError as error:
+        raise HTTPException(status_code=400, detail=str(error)) from None
+
+
+@app.post("/office/results")
+def office_result(body: PatientFile, token: str = Query(...)):
+    office = require_office(token)
+    try:
+        return add_office_result(body.visit_id, office["id"], body.name, body.content_type, body.content)
+    except PatientError as error:
+        raise HTTPException(status_code=400, detail=str(error)) from None
+
+
+@app.get("/office/files/{doc_id}")
+def office_file(doc_id: str, token: str = Query(...)):
+    office = require_office(token)
+    try:
+        found = read_document(doc_id, business_id=office["id"])
+    except PatientError as error:
+        raise HTTPException(status_code=404, detail=str(error)) from None
+    if found is None:
+        raise HTTPException(status_code=404, detail="That file is not available.")
+    path, name, content_type = found
+    return FileResponse(path, media_type=content_type, filename=name)
 
 
 @app.get("/orders/{order_id}")

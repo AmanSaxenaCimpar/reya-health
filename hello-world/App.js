@@ -6,6 +6,7 @@ import { AboutScreen } from './src/screens/AboutScreen';
 import { AccessGate, hasAccess } from './src/screens/AccessGate';
 import { BookingScreen } from './src/screens/BookingScreen';
 import { HomeScreen } from './src/screens/HomeScreen';
+import { PatientScreen, patientToken } from './src/screens/PatientScreen';
 import { VisitScreen } from './src/screens/VisitScreen';
 
 export default function App() {
@@ -31,6 +32,14 @@ export default function App() {
   const home = () => setScreen({ name: 'home' });
   const about = () => setScreen({ name: 'about' });
   const office = () => setScreen({ name: 'office' });
+  const portal = () => setScreen({ name: 'portal' });
+  const book = (visit) => {
+    if (!patientToken()) {
+      setScreen({ name: 'portal', visit });
+      return;
+    }
+    setScreen({ name: 'booking', visit });
+  };
 
   if (!unlocked) {
     return (
@@ -48,12 +57,16 @@ export default function App() {
         <HomeScreen
           onAbout={about}
           onOffice={office}
-          onBook={(visit) => setScreen({ name: 'booking', visit })}
+          onPortal={portal}
+          onBook={book}
           onCompanyBook={(visit) => setScreen({ name: 'visit', visit })}
         />
       ) : null}
       {screen.name === 'about' ? <AboutScreen onHome={home} /> : null}
       {screen.name === 'office' ? <AdminScreen onHome={home} onAbout={about} /> : null}
+      {screen.name === 'portal' ? (
+        <PatientScreen visit={screen.visit} onHome={home} onAbout={about} onOffice={office} onBook={book} />
+      ) : null}
       {screen.name === 'visit' ? (
         <VisitScreen visit={screen.visit} onHome={home} onAbout={about} onBack={home} />
       ) : null}
