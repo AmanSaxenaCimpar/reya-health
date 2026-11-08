@@ -33,6 +33,7 @@ from portal_store import (
     saved_questions,
     set_price,
 )
+from orders import OrderError, prepare_order, read_order
 from sharepoint import SharePointError, configured, save_booking
 
 DIST = Path(__file__).resolve().parent.parent / "hello-world" / "dist"
@@ -498,6 +499,7 @@ class TestLine(BaseModel):
 class PatientInfo(BaseModel):
     first: str = ""
     last: str = ""
+    preferred: str = ""
     dob: str = ""
     gender: str = ""
     relationship: str = ""
@@ -523,6 +525,8 @@ class BookingRequest(BaseModel):
     address: str = ""
     order: str = ""
     order_file: str = ""
+    order_content: str = ""
+    order_content_type: str = ""
     appointment_date: str = ""
     appointment_time: str = ""
     labs: List[TestLine] = Field(default_factory=list)
@@ -543,12 +547,30 @@ def create_booking(booking: BookingRequest):
         raise HTTPException(status_code=400, detail="This visit belongs to one business. Remove imaging tests.")
     if office and office.get("kind") == "imaging" and booking.labs:
         raise HTTPException(status_code=400, detail="This visit belongs to one business. Remove lab tests.")
-    if not configured():
-        return {"saved": False, "reason": "not_configured"}
+    payload = booking.model_dump()
     try:
-        return save_booking(booking.model_dump())
+        order = prepare_order(payload)
+    except OrderError as error:
+        raise HTTPException(status_code=400, detail=str(error)) from None
+    payload.update(order)
+    result = {"saved": False, "reason": "not_configured", "order_id": order["order_id"], "order_file": order["order_file"]}
+    if not configured():
+        return result
+    try:
+        saved = save_booking(payload)
     except SharePointError as error:
         raise HTTPException(status_code=502, detail=str(error)) from None
+    saved.update(order_id=order["order_id"], order_file=order["order_file"])
+    return saved
+
+
+@app.get("/orders/{order_id}")
+def download_order(order_id: str):
+    found = read_order(order_id)
+    if found is None:
+        raise HTTPException(status_code=404, detail="That order is not available.")
+    path, name, content_type = found
+    return FileResponse(path, media_type=content_type, filename=name)
 
 
 @app.get("/questionnaires")

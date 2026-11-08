@@ -53,6 +53,8 @@ def _flat_booking(booking: dict) -> dict:
         "address": booking.get("address") or "",
         "order": booking.get("order") or "",
         "order_file": booking.get("order_file") or "",
+        "order_content": booking.get("order_content") or "",
+        "order_content_type": booking.get("order_content_type") or "",
         "appointment_date": booking.get("appointment_date") or "",
         "appointment_time": booking.get("appointment_time") or "",
         "first_name": first,

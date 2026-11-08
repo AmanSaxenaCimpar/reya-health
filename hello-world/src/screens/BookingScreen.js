@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
-import { loadImaging, loadLabs, loadQuestionnaires, loadQuote, saveBooking } from '../api';
+import { API_URL, loadImaging, loadLabs, loadQuestionnaires, loadQuote, saveBooking } from '../api';
 import { SiteHeader } from '../SiteHeader';
 import { colors, font, money } from '../theme';
 
@@ -27,13 +27,29 @@ function formatDate(date) {
 function pickFile() {
   return new Promise((resolve) => {
     if (typeof document === 'undefined') {
-      resolve('');
+      resolve(null);
       return;
     }
     const input = document.createElement('input');
     input.type = 'file';
-    input.accept = 'image/*,.pdf';
-    input.onchange = () => resolve(input.files?.[0]?.name || '');
+    input.accept = '.pdf,image/jpeg,image/png,image/webp,image/gif,image/heic';
+    input.onchange = () => {
+      const file = input.files?.[0];
+      if (!file) {
+        resolve(null);
+        return;
+      }
+      const reader = new FileReader();
+      reader.onload = () => {
+        const result = String(reader.result || '');
+        resolve({
+          name: file.name,
+          type: file.type || 'application/octet-stream',
+          content: result.includes(',') ? result.split(',')[1] : '',
+        });
+      };
+      reader.readAsDataURL(file);
+    };
     input.click();
   });
 }
@@ -110,7 +126,7 @@ export function BookingScreen({ visit, onHome, onAbout, onBack }) {
   const [generalSection, setGeneralSection] = useState(null);
   const [loadError, setLoadError] = useState('');
   const [order, setOrder] = useState('');
-  const [fileName, setFileName] = useState('');
+  const [orderFile, setOrderFile] = useState(null);
   const [services, setServices] = useState(
     visit.service === 'lab' || visit.service === 'imaging' ? [visit.service] : []
   );
@@ -134,6 +150,7 @@ export function BookingScreen({ visit, onHome, onAbout, onBack }) {
   const [stepKey, setStepKey] = useState('order');
   const [done, setDone] = useState(false);
   const [stored, setStored] = useState(false);
+  const [orderLink, setOrderLink] = useState('');
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState('');
 
@@ -263,7 +280,7 @@ export function BookingScreen({ visit, onHome, onAbout, onBack }) {
   }
 
   const canContinue = {
-    order: order === 'no' || (order === 'yes' && fileName),
+    order: order === 'no' || (order === 'yes' && orderFile?.content),
     choose: services.length > 0,
     lab: labPicked.length > 0,
     imaging: imagingPicked.length > 0,
@@ -295,7 +312,9 @@ export function BookingScreen({ visit, onHome, onAbout, onBack }) {
       zip: visit.zip,
       address: visit.address,
       order,
-      order_file: fileName,
+      order_file: order === 'yes' ? orderFile?.name || '' : '',
+      order_content: order === 'yes' ? orderFile?.content || '' : '',
+      order_content_type: order === 'yes' ? orderFile?.type || '' : '',
       appointment_date: date ? formatDate(date) : '',
       appointment_time: time,
       service: services.includes('imaging') ? 'imaging' : 'lab',
@@ -309,6 +328,7 @@ export function BookingScreen({ visit, onHome, onAbout, onBack }) {
     })
       .then((result) => {
         setStored(Boolean(result.saved));
+        setOrderLink(result.order_id ? `${API_URL}/orders/${result.order_id}` : '');
         setDone(true);
       })
       .catch((error) => {
@@ -329,11 +349,16 @@ export function BookingScreen({ visit, onHome, onAbout, onBack }) {
           {date ? formatDate(date) : ''} {time}.
         </Text>
         <Text style={styles.copy}>
-          Total {money(total)}.{' '}
+          Total {money(total)}. Your order is saved with this visit.{' '}
           {stored
-            ? 'Labs, imaging, questionnaires, and patient details were sent to SharePoint.'
-            : 'Power Automate is not connected yet, so this visit was not stored.'}
+            ? 'The visit and the order were sent to SharePoint.'
+            : 'Power Automate is not connected yet, so this visit was not stored in SharePoint.'}
         </Text>
+        {orderLink ? (
+          <Pressable onPress={() => window.open(orderLink, '_blank', 'noopener')} style={styles.outline}>
+            <Text style={styles.outlineText}>Open your order</Text>
+          </Pressable>
+        ) : null}
         <View style={styles.navRow}>
           <Pressable onPress={onBack} style={styles.backOutline}>
             <Text style={styles.backOutlineText}>← Back to Find care</Text>
@@ -371,18 +396,31 @@ export function BookingScreen({ visit, onHome, onAbout, onBack }) {
           />
           <Choice
             title="No, I don't have one yet"
-            detail="You can still book — we'll guide you through the next steps"
+            detail="We will create a PDF order from this visit"
             on={order === 'no'}
-            onPress={() => setOrder('no')}
+            onPress={() => {
+              setOrder('no');
+              setOrderFile(null);
+            }}
           />
           {order === 'yes' ? (
             <View style={styles.notice}>
-              <Text style={styles.noticeTitle}>48-hour notice required</Text>
-              <Text style={styles.noticeCopy}>Submit the order at least 48 hours before the appointment.</Text>
-              <Pressable onPress={async () => setFileName(await pickFile())} style={styles.outline}>
-                <Text style={styles.outlineText}>Upload document</Text>
+              <Text style={styles.noticeTitle}>Upload the order</Text>
+              <Text style={styles.noticeCopy}>
+                Use a PDF or a photo. It stays with this visit and is sent with the booking.
+              </Text>
+              <Pressable onPress={async () => setOrderFile(await pickFile())} style={styles.outline}>
+                <Text style={styles.outlineText}>{orderFile?.name ? 'Replace file' : 'Upload PDF or image'}</Text>
               </Pressable>
-              {fileName ? <Text style={styles.copy}>{fileName}</Text> : null}
+              {orderFile?.name ? <Text style={styles.copy}>{orderFile.name}</Text> : null}
+            </View>
+          ) : null}
+          {order === 'no' ? (
+            <View style={styles.notice}>
+              <Text style={styles.noticeTitle}>We will create the order</Text>
+              <Text style={styles.noticeCopy}>
+                After you finish the visit, we make a PDF requisition from the patient details and tests, keep it with this visit, and send that order with the booking.
+              </Text>
             </View>
           ) : null}
         </View>
@@ -566,6 +604,7 @@ export function BookingScreen({ visit, onHome, onAbout, onBack }) {
           time={time}
           info={info}
           serviceName={services.includes('imaging') ? 'Imaging' : 'Lab'}
+          orderNote={order === 'yes' ? orderFile?.name || 'Uploaded order' : 'We will create this order'}
           total={total}
           holdStarted={holdStarted}
           saveError={saveError}
@@ -624,6 +663,7 @@ function ReviewDetails({
   time,
   info,
   serviceName,
+  orderNote,
   total,
   holdStarted,
   saveError,
@@ -653,6 +693,7 @@ function ReviewDetails({
       >
         <ReviewRow label="Location" value={visit.address || visit.zip} />
         <ReviewRow label="Service Type" value={chosen.map((item) => item.name).join(', ')} />
+        <ReviewRow label="Order" value={orderNote} />
       </ReviewSection>
       <ReviewSection title="Appointment Date and Time" onEdit={() => onEdit('schedule')}>
         <ReviewRow label="Appointment Date" value={date ? formatDate(date) : ''} />
