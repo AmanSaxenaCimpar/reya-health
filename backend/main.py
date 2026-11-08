@@ -5,13 +5,34 @@ import time
 from pathlib import Path
 from typing import List, Optional
 
-from fastapi import FastAPI, HTTPException, Query
+from fastapi import FastAPI, File, HTTPException, Query, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
 
-from catalog import IMAGING_TESTS, LAB_TESTS, questionnaires_for
-from portal_store import apply_prices, issue_invite, load, save, transport_fee
+from catalog import IMAGING_QUESTIONNAIRES, IMAGING_TESTS, LAB_QUESTIONNAIRES, LAB_TESTS, SHARED_QUESTIONS, questionnaires_for
+from portal_store import (
+    add_test,
+    businesses_for_kind,
+    find_login,
+    get_business,
+    import_test_rows,
+    issue_invite,
+    list_businesses,
+    load,
+    miles_between_zips,
+    office_settings,
+    parse_table,
+    public_tests,
+    quote_for_miles,
+    register_business,
+    remove_test,
+    save_content,
+    save_office_rules,
+    save_questions,
+    saved_questions,
+    set_price,
+)
 from sharepoint import SharePointError, configured, save_booking
 
 DIST = Path(__file__).resolve().parent.parent / "hello-world" / "dist"
@@ -88,49 +109,108 @@ def health():
     return {"ok": True}
 
 
+def area_quote(zip_code: str, service: str | None = None, business: str | None = None) -> dict:
+    code = "".join(character for character in zip_code if character.isdigit())[:5]
+    office = get_business(business) if business else None
+    if office is None and service in {"lab", "imaging"}:
+        matches = businesses_for_kind(service)
+        office = matches[0] if len(matches) == 1 else None
+    if office is None or office.get("kind") not in {"lab", "imaging"}:
+        if service in {"lab", "imaging"} and not business:
+            return service_coverage(code, service)
+        return {"zip": code, "served": zip_served(code), "area": AREA, "miles": None}
+    base = office.get("base_zip") or "60611"
+    miles = miles_between_zips(base, code) if len(code) == 5 else None
+    if miles is None:
+        served = zip_served(code)
+        return {"zip": code, "served": served, "area": AREA, "miles": None, "service": office["kind"], "business": office["id"]}
+    quote = quote_for_miles(miles, office["id"])
+    quote.update({
+        "zip": code,
+        "service": office["kind"],
+        "business": office["id"],
+        "area": quote.get("reason") or f"Within {quote.get('limit')} miles of {base}",
+    })
+    return quote
+
+
+def service_coverage(code: str, service: str) -> dict:
+    quotes = []
+    for office in businesses_for_kind(service):
+        quotes.append(area_quote(code, service, office["id"]))
+    serving = [row for row in quotes if row.get("served")]
+    if len(serving) == 1:
+        return serving[0]
+    if serving:
+        return {
+            "zip": code,
+            "served": True,
+            "service": service,
+            "miles": None,
+            "area": "One or more registered businesses serve this ZIP. Each sets its own price.",
+        }
+    if quotes:
+        return {"zip": code, "served": False, "service": service, "area": quotes[0].get("reason") or AREA, "miles": quotes[0].get("miles")}
+    return {"zip": code, "served": False, "service": service, "area": AREA, "miles": None}
+
+
 @app.get("/coverage")
-def coverage(zip: str = Query(...)):
-    code = "".join(character for character in zip if character.isdigit())[:5]
-    return {"zip": code, "served": zip_served(code), "area": AREA}
+def coverage(zip: str = Query(...), service: Optional[str] = None, business: Optional[str] = None):
+    return area_quote(zip, service, business)
+
+
+@app.get("/quote")
+def quote(zip: str = Query(...), service: Optional[str] = None, business: Optional[str] = None):
+    return area_quote(zip, service, business)
 
 
 def all_companies():
-    extra = []
-    for business in load().get("businesses") or []:
-        extra.append(
+    rows = [company for company in COMPANIES if company["id"] not in {"reya-lab", "reya-imaging"}]
+    for business in list_businesses():
+        rows.append(
             {
-                "id": business.get("id"),
-                "name": business.get("name"),
-                "services": business.get("services") or [],
+                "id": business["id"],
+                "name": business["name"],
+                "services": [business["kind"]],
                 "book": "flow",
                 "url": None,
             }
         )
-    return COMPANIES + extra
+    return rows
 
 
 @app.get("/companies")
-def companies(service: Optional[str] = None):
+def companies(service: Optional[str] = None, zip: Optional[str] = None):
     rows = all_companies()
     if service in SERVICE_KEYS:
-        return [company for company in rows if service in company["services"]]
+        rows = [company for company in rows if service in company["services"]]
+    if zip and service in {"lab", "imaging"}:
+        available = []
+        for company in rows:
+            if company["book"] != "flow":
+                available.append(company)
+                continue
+            decision = area_quote(zip, service, company["id"])
+            if decision.get("served"):
+                available.append({**company, **decision})
+        return available
     return rows
 
 
 @app.get("/labs")
-def labs():
-    return apply_prices(LAB_TESTS)
+def labs(business: Optional[str] = None):
+    return public_tests(business or "reya-lab")
 
 
 @app.get("/imaging")
-def imaging():
-    return apply_prices(IMAGING_TESTS)
+def imaging(business: Optional[str] = None):
+    return public_tests(business or "reya-imaging")
 
 
 @app.get("/pricing")
 def pricing():
-    rule = load()["transport"]
-    return {"transport": rule, "example": transport_fee(rule.get("included_miles") or 0)}
+    data = load()
+    return {"service": data.get("service"), "bands": data.get("bands") or []}
 
 
 class TransportInput(BaseModel):
@@ -142,10 +222,25 @@ class OfficeLogin(BaseModel):
     password: str
 
 
-class TransportRule(BaseModel):
-    base_fee: float
-    included_miles: float
-    per_mile: float
+class MileBand(BaseModel):
+    from_miles: float
+    to_miles: float
+    extra: float
+
+
+class PricingRules(BaseModel):
+    base_zip: str
+    transport_fee: float
+    bands: List[MileBand]
+
+
+class TestInput(BaseModel):
+    code: str
+    name: str
+    kind: str
+    cpt: str = ""
+    price: float = 0
+    summary: str = ""
 
 
 class PriceUpdate(BaseModel):
@@ -165,105 +260,224 @@ class InviteRequest(BaseModel):
     role: str
 
 
-def office_password() -> str:
-    return os.environ.get("OFFICE_PASSWORD", "ReyaOffice2026")
+def token_secret() -> str:
+    return os.environ.get("OFFICE_TOKEN_SECRET", "ReyaOfficeToken2026")
 
 
-def office_email() -> str:
-    return os.environ.get("OFFICE_EMAIL", "office@reyahealth.com").strip().lower()
-
-
-def office_token(email: str) -> str:
+def office_token(email: str, business_id: str) -> str:
     expires = str(int(time.time()) + 60 * 60 * 12)
-    payload = f"{email}|{expires}"
-    signature = hmac.new(office_password().encode(), payload.encode(), hashlib.sha256).hexdigest()
+    payload = f"{email}|{business_id}|{expires}"
+    signature = hmac.new(token_secret().encode(), payload.encode(), hashlib.sha256).hexdigest()
     return f"{payload}|{signature}"
 
 
-def require_office(token: str) -> None:
+def require_office(token: str) -> dict:
     parts = (token or "").split("|")
-    if len(parts) != 3:
+    if len(parts) != 4:
         raise HTTPException(status_code=401, detail="Sign in to the back office again.")
-    email, expires, signature = parts
-    payload = f"{email}|{expires}"
-    expected = hmac.new(office_password().encode(), payload.encode(), hashlib.sha256).hexdigest()
-    if not hmac.compare_digest(signature, expected) or int(expires) < time.time():
+    email, business_id, expires, signature = parts
+    office = get_business(business_id)
+    payload = f"{email}|{business_id}|{expires}"
+    expected = hmac.new(token_secret().encode(), payload.encode(), hashlib.sha256).hexdigest()
+    if office is None or not hmac.compare_digest(signature, expected) or int(expires) < time.time():
         raise HTTPException(status_code=401, detail="Sign in to the back office again.")
+    return office
 
 
 @app.post("/office/login")
 def office_login(body: OfficeLogin):
-    email = body.email.strip().lower()
-    invites = load().get("invites") or []
-    invited = next((row for row in invites if row.get("email") == email), None)
-    if invited and hmac.compare_digest(body.password, invited.get("temporary_password") or ""):
-        return {"token": office_token(email), "email": email, "role": invited.get("role")}
-    if email == office_email() and hmac.compare_digest(body.password, office_password()):
-        return {"token": office_token(email), "email": email, "role": "admin"}
-    raise HTTPException(status_code=401, detail="That email or password is not recognized.")
+    found = find_login(body.email, body.password)
+    if not found:
+        raise HTTPException(status_code=401, detail="That email or password is not recognized.")
+    office, role = found
+    return {
+        "token": office_token(body.email.strip().lower(), office["id"]),
+        "email": body.email.strip().lower(),
+        "role": office["kind"],
+        "business_id": office["id"],
+        "business_name": office["name"],
+        "staff_role": role,
+    }
+
+
+def question_groups(business_id: str, kind: str, tests: list[dict]) -> tuple[list, list]:
+    blocks = LAB_QUESTIONNAIRES if kind == "lab" else IMAGING_QUESTIONNAIRES
+    general = saved_questions(business_id, "general")
+    if general is None:
+        general = SHARED_QUESTIONS
+    groups = []
+    seen = set()
+    for item in tests:
+        key = item.get("questionnaire_key") or item["code"]
+        if key in seen:
+            continue
+        seen.add(key)
+        default = blocks.get(key) or {"title": item["name"], "questions": []}
+        edited = saved_questions(business_id, key)
+        groups.append(
+            {
+                "key": key,
+                "title": default.get("title") or item["name"],
+                "questions": edited if edited is not None else default.get("questions") or [],
+            }
+        )
+    return general, groups
+
+
+def office_tests(office: dict) -> list[dict]:
+    rows = []
+    for item in public_tests(office["id"]):
+        rows.append(
+            {
+                "code": item["code"],
+                "name": item["name"],
+                "kind": office["kind"],
+                "cpt": item.get("cpt") or "",
+                "price": item["price"],
+                "summary": item.get("summary") or "",
+                "sections": item.get("sections") or [],
+                "questionnaire_key": item.get("questionnaire_key") or item["code"],
+            }
+        )
+    return rows
 
 
 @app.get("/office/catalog")
 def office_catalog(token: str = Query(...)):
-    require_office(token)
-    data = load()
-    tests = []
-    for item in apply_prices(LAB_TESTS):
-        tests.append({"code": item["code"], "name": item["name"], "kind": "lab", "price": item["price"]})
-    for item in apply_prices(IMAGING_TESTS):
-        tests.append({"code": item["code"], "name": item["name"], "kind": "imaging", "price": item["price"]})
+    office = require_office(token)
+    tests = office_tests(office)
+    general, groups = question_groups(office["id"], office["kind"], tests)
     return {
-        "transport": data["transport"],
+        "role": office["kind"],
+        "business_id": office["id"],
+        "business_name": office["name"],
+        "service": {"base_zip": office.get("base_zip"), "transport_fee": office.get("transport_fee")},
+        "bands": office.get("bands") or [],
         "tests": tests,
-        "businesses": data.get("businesses") or [],
+        "general_questions": general,
+        "question_groups": groups,
+        "staff": [
+            {"email": person.get("email"), "name": person.get("name"), "role": person.get("role")}
+            for person in office.get("staff") or []
+        ],
         "email_ready": bool(os.environ.get("SMTP_HOST", "").strip()),
     }
 
 
-@app.put("/office/transport")
-def office_transport(body: TransportRule, token: str = Query(...)):
-    require_office(token)
-    data = load()
-    data["transport"] = body.model_dump()
-    save(data)
-    return {"transport": data["transport"], "example": transport_fee(body.included_miles + 5)}
+@app.put("/office/rules")
+def office_rules(body: PricingRules, token: str = Query(...)):
+    office = require_office(token)
+    if not body.bands:
+        raise HTTPException(status_code=400, detail="Add at least one mileage rule.")
+    saved = save_office_rules(
+        office["id"],
+        "".join(ch for ch in body.base_zip if ch.isdigit())[:5],
+        body.transport_fee,
+        [band.model_dump() for band in body.bands],
+    )
+    return {"service": {"base_zip": saved["base_zip"], "transport_fee": saved["transport_fee"]}, "bands": saved["bands"]}
+
+
+@app.post("/office/tests")
+def office_add_test(body: TestInput, token: str = Query(...)):
+    office = require_office(token)
+    if not body.code.strip() or not body.name.strip():
+        raise HTTPException(status_code=400, detail="Enter a code and a name.")
+    return add_test(office["id"], body.model_dump())
+
+
+@app.delete("/office/tests")
+def office_remove_test(code: str, token: str = Query(...)):
+    office = require_office(token)
+    known = {item["code"] for item in public_tests(office["id"])}
+    if code not in known:
+        raise HTTPException(status_code=404, detail="That test is not in this business.")
+    remove_test(office["id"], code)
+    return {"removed": code}
+
+
+@app.post("/office/tests/upload")
+async def office_upload_tests(token: str = Query(...), file: UploadFile = File(...)):
+    office = require_office(token)
+    raw = await file.read()
+    try:
+        rows = parse_table(file.filename or "tests.csv", raw)
+    except Exception as error:
+        raise HTTPException(status_code=400, detail="Use a CSV or Excel file with the header row.") from error
+    return import_test_rows(rows, office["id"])
+
+
+class ContentUpdate(BaseModel):
+    code: str
+    summary: str = ""
+    sections: list = Field(default_factory=list)
+
+
+class QuestionUpdate(BaseModel):
+    key: str
+    questions: list
 
 
 @app.put("/office/prices")
 def office_prices(body: PriceUpdate, token: str = Query(...)):
-    require_office(token)
-    data = load()
-    data["prices"][body.code] = body.price
-    save(data)
+    office = require_office(token)
+    if body.code not in {item["code"] for item in public_tests(office["id"])}:
+        raise HTTPException(status_code=404, detail="That test is not in this business.")
+    set_price(office["id"], body.code, body.price)
     return {"code": body.code, "price": body.price}
+
+
+@app.put("/office/content")
+def office_content(body: ContentUpdate, token: str = Query(...)):
+    office = require_office(token)
+    if body.code not in {item["code"] for item in public_tests(office["id"])}:
+        raise HTTPException(status_code=404, detail="That test is not in this business.")
+    save_content(office["id"], body.code, body.summary, body.sections)
+    return {"code": body.code}
+
+
+@app.put("/office/questions")
+def office_questions(body: QuestionUpdate, token: str = Query(...)):
+    office = require_office(token)
+    tests = public_tests(office["id"])
+    allowed = {"general"}
+    allowed.update(item.get("questionnaire_key") or item["code"] for item in tests)
+    if body.key not in allowed:
+        raise HTTPException(status_code=404, detail="Those questions belong to another business.")
+    save_questions(office["id"], body.key, body.questions)
+    return {"key": body.key, "count": len(body.questions)}
 
 
 @app.post("/office/businesses")
 def office_business(body: BusinessSetup, token: str = Query(...)):
-    require_office(token)
-    services = [item for item in body.services if item in SERVICE_KEYS]
-    if not body.name.strip() or not services:
-        raise HTTPException(status_code=400, detail="Enter a business name and at least one service.")
-    data = load()
-    business = {
-        "id": f"biz-{int(time.time())}",
-        "name": body.name.strip(),
-        "email": body.email.strip(),
-        "services": services,
+    office = require_office(token)
+    kind = office["kind"]
+    if not body.name.strip() or "@" not in body.email:
+        raise HTTPException(status_code=400, detail="Enter a business name and an email for its office login.")
+    try:
+        created = register_business(body.name, body.email, kind)
+    except ValueError as error:
+        raise HTTPException(status_code=400, detail=str(error)) from None
+    return {
+        "id": created["id"],
+        "name": created["name"],
+        "email": created["email"],
+        "password": created["password"],
+        "services": [created["kind"]],
     }
-    data["businesses"].append(business)
-    save(data)
-    return business
 
 
 @app.post("/office/invites")
 def office_invite(body: InviteRequest, token: str = Query(...)):
-    require_office(token)
+    office = require_office(token)
     if body.role not in {"provider", "staff"}:
         raise HTTPException(status_code=400, detail="Choose a provider or staff login.")
     if "@" not in body.email:
         raise HTTPException(status_code=400, detail="Enter an email address.")
-    invite = issue_invite(body.email, body.role, body.name)
+    try:
+        invite = issue_invite(office["id"], body.email, body.role, body.name)
+    except ValueError as error:
+        raise HTTPException(status_code=400, detail=str(error)) from None
     sent = bool(os.environ.get("SMTP_HOST", "").strip())
     return {
         "email": invite["email"],
@@ -303,6 +517,7 @@ class QuestionSection(BaseModel):
 
 class BookingRequest(BaseModel):
     company: str = ""
+    business: str = ""
     service: str = ""
     zip: str = ""
     address: str = ""
@@ -321,6 +536,13 @@ class BookingRequest(BaseModel):
 
 @app.post("/bookings")
 def create_booking(booking: BookingRequest):
+    if booking.labs and booking.imaging:
+        raise HTTPException(status_code=400, detail="Lab and imaging are billed separately. Book one service at a time.")
+    office = get_business(booking.business) if booking.business else None
+    if office and office.get("kind") == "lab" and booking.imaging:
+        raise HTTPException(status_code=400, detail="This visit belongs to one business. Remove imaging tests.")
+    if office and office.get("kind") == "imaging" and booking.labs:
+        raise HTTPException(status_code=400, detail="This visit belongs to one business. Remove lab tests.")
     if not configured():
         return {"saved": False, "reason": "not_configured"}
     try:
@@ -333,9 +555,16 @@ def create_booking(booking: BookingRequest):
 def questionnaires(
     lab: Optional[List[str]] = Query(default=None),
     imaging: Optional[List[str]] = Query(default=None),
+    service: Optional[str] = None,
+    business: Optional[str] = None,
 ):
     return {
-        "sections": questionnaires_for(lab_codes=lab or [], imaging_codes=imaging or []),
+        "sections": questionnaires_for(
+            lab_codes=lab or [],
+            imaging_codes=imaging or [],
+            service=service,
+            business=business,
+        ),
     }
 
 

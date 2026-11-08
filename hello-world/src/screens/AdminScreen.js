@@ -1,15 +1,20 @@
 import { useEffect, useState } from 'react';
 import { Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 import {
+  addOfficeTest,
   inviteLogin,
   officeCatalog,
   officeLogin,
   registerBusiness,
+  removeOfficeTest,
+  saveContent,
   savePrice,
-  saveTransport,
+  saveQuestions,
+  saveRules,
+  uploadOfficeTests,
 } from '../api';
 import { SiteHeader } from '../SiteHeader';
-import { colors, font, money } from '../theme';
+import { colors, font } from '../theme';
 
 const TOKEN_KEY = 'reya_office_token';
 
@@ -25,8 +30,9 @@ export function AdminScreen({ onHome, onAbout }) {
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
   const [catalog, setCatalog] = useState(null);
-  const [rule, setRule] = useState({ base_fee: '', included_miles: '', per_mile: '' });
-  const [business, setBusiness] = useState({ name: '', email: '', lab: true, imaging: false });
+  const [rule, setRule] = useState({ base_zip: '60611', transport_fee: '40', bands: [] });
+  const [testForm, setTestForm] = useState({ code: '', name: '', kind: 'lab', cpt: '', price: '' });
+  const [business, setBusiness] = useState({ name: '', email: '', service: 'lab' });
   const [invite, setInvite] = useState({ name: '', email: '', role: 'provider' });
   const [notice, setNotice] = useState('');
 
@@ -38,9 +44,13 @@ export function AdminScreen({ onHome, onAbout }) {
       .then((payload) => {
         setCatalog(payload);
         setRule({
-          base_fee: String(payload.transport.base_fee),
-          included_miles: String(payload.transport.included_miles),
-          per_mile: String(payload.transport.per_mile),
+          base_zip: payload.service?.base_zip || '60611',
+          transport_fee: String(payload.service?.transport_fee ?? 0),
+          bands: (payload.bands || []).map((band) => ({
+            from_miles: String(band.from_miles),
+            to_miles: String(band.to_miles),
+            extra: String(band.extra),
+          })),
         });
       })
       .catch((err) => {
@@ -63,14 +73,23 @@ export function AdminScreen({ onHome, onAbout }) {
 
   async function saveRule() {
     setNotice('');
-    const saved = await saveTransport(token, {
-      base_fee: Number(rule.base_fee),
-      included_miles: Number(rule.included_miles),
-      per_mile: Number(rule.per_mile),
+    await saveRules(token, {
+      base_zip: rule.base_zip,
+      transport_fee: Number(rule.transport_fee),
+      bands: rule.bands.map((band) => ({
+        from_miles: Number(band.from_miles),
+        to_miles: Number(band.to_miles),
+        extra: Number(band.extra),
+      })),
     });
-    setNotice(
-      `Transportation saved. At ${saved.example.miles} miles the fee is ${money(saved.example.total)}.`
-    );
+    setNotice('Mileage rules saved. A ZIP past the last band is not served.');
+  }
+
+  function updateBand(index, key, value) {
+    setRule((current) => ({
+      ...current,
+      bands: current.bands.map((band, bandIndex) => (bandIndex === index ? { ...band, [key]: value } : band)),
+    }));
   }
 
   async function updatePrice(code, price) {
@@ -81,16 +100,53 @@ export function AdminScreen({ onHome, onAbout }) {
     }));
   }
 
+  async function refreshCatalog() {
+    const payload = await officeCatalog(token);
+    setCatalog(payload);
+  }
+
+  async function createTest() {
+    await addOfficeTest(token, {
+      ...testForm,
+      kind: catalog?.role || 'lab',
+      price: Number(testForm.price || 0),
+    });
+    setTestForm({ code: '', name: '', kind: catalog?.role || 'lab', cpt: '', price: '' });
+    await refreshCatalog();
+    setNotice('Test added.');
+  }
+
+  async function deleteTest(code) {
+    await removeOfficeTest(token, code);
+    await refreshCatalog();
+  }
+
+  async function uploadTests() {
+    const input = document.createElement('input');
+    input.type = 'file';
+    input.accept = '.csv,.xlsx';
+    input.onchange = async () => {
+      const file = input.files?.[0];
+      if (!file) {
+        return;
+      }
+      const result = await uploadOfficeTests(token, file);
+      await refreshCatalog();
+      setNotice(`Upload finished. Added ${result.added}, updated ${result.updated}.`);
+    };
+    input.click();
+  }
+
   async function addBusiness() {
-    const services = [business.lab ? 'lab' : '', business.imaging ? 'imaging' : ''].filter(Boolean);
     const created = await registerBusiness(token, {
       name: business.name,
       email: business.email,
-      services,
+      services: [catalog?.role || 'lab'],
     });
-    setCatalog((current) => ({ ...current, businesses: [...current.businesses, created] }));
-    setBusiness({ name: '', email: '', lab: true, imaging: false });
-    setNotice(`${created.name} is now a bookable business.`);
+    setBusiness({ name: '', email: '', service: catalog?.role || 'lab' });
+    setNotice(
+      `${created.name} has its own back office. Email ${created.email}. Password ${created.password}. Sign out and use that login. This office cannot see or edit that business.`
+    );
   }
 
   async function sendInvite() {
@@ -110,7 +166,9 @@ export function AdminScreen({ onHome, onAbout }) {
         <Text style={styles.title}>Back office</Text>
         {!token || !catalog ? (
           <View style={styles.card}>
-            <Text style={styles.copy}>Sign in with the office account. This is separate from the old portal.</Text>
+            <Text style={styles.copy}>
+              Each business has its own login. A lab office cannot see an imaging office, and a new business gets a new login when it is registered.
+            </Text>
             <Field label="Email" value={email} onChangeText={setEmail} />
             <Field label="Password" value={password} secureTextEntry onChangeText={setPassword} />
             {error ? <Text style={styles.error}>{error}</Text> : null}
@@ -121,52 +179,108 @@ export function AdminScreen({ onHome, onAbout }) {
         ) : (
           <View>
             {notice ? <Text style={styles.notice}>{notice}</Text> : null}
-            <Text style={styles.heading}>Transportation fee</Text>
+            <Text style={styles.heading}>{catalog.business_name || 'Back office'}</Text>
             <Text style={styles.copy}>
-              The base fee is always charged. After the included miles, each extra mile adds the per-mile amount.
+              This login edits only {catalog.business_name}: its tests, test details, questionnaires, mileage prices, and its own staff logins.
             </Text>
-            <Field label="Base fee ($)" value={rule.base_fee} onChangeText={(base_fee) => setRule({ ...rule, base_fee })} />
+            <Text style={styles.heading}>Mileage price rules</Text>
+            <Text style={styles.copy}>
+              A visit total is the selected test fees, plus one fixed transportation fee, plus the extra amount Z for the mile band. Service stops at the last band. Example: 10–25 miles adds $25, 25–50 miles adds $50, and anything past 50 miles is not served.
+            </Text>
+            <Field label="Starting ZIP" value={rule.base_zip} onChangeText={(base_zip) => setRule({ ...rule, base_zip })} />
             <Field
-              label="Included miles"
-              value={rule.included_miles}
-              onChangeText={(included_miles) => setRule({ ...rule, included_miles })}
+              label="Fixed transportation fee ($)"
+              value={rule.transport_fee}
+              onChangeText={(transport_fee) => setRule({ ...rule, transport_fee })}
             />
-            <Field label="Amount per extra mile ($)" value={rule.per_mile} onChangeText={(per_mile) => setRule({ ...rule, per_mile })} />
+            {rule.bands.map((band, index) => (
+              <View key={`${band.from_miles}-${index}`} style={styles.priceRow}>
+                <TextInput value={band.from_miles} onChangeText={(value) => updateBand(index, 'from_miles', value)} style={styles.priceInput} />
+                <Text style={styles.copy}>to</Text>
+                <TextInput value={band.to_miles} onChangeText={(value) => updateBand(index, 'to_miles', value)} style={styles.priceInput} />
+                <Text style={styles.copy}>miles, add $</Text>
+                <TextInput value={band.extra} onChangeText={(value) => updateBand(index, 'extra', value)} style={styles.priceInput} />
+                <Pressable
+                  onPress={() => setRule({ ...rule, bands: rule.bands.filter((_, bandIndex) => bandIndex !== index) })}
+                  style={styles.small}
+                >
+                  <Text style={styles.buttonText}>Remove</Text>
+                </Pressable>
+              </View>
+            ))}
+            <Pressable
+              onPress={() => setRule({ ...rule, bands: [...rule.bands, { from_miles: '', to_miles: '', extra: '' }] })}
+              style={styles.button}
+            >
+              <Text style={styles.buttonText}>Add a mile band</Text>
+            </Pressable>
             <Pressable onPress={saveRule} style={styles.button}>
-              <Text style={styles.buttonText}>Save transportation rule</Text>
+              <Text style={styles.buttonText}>Save mileage rules</Text>
             </Pressable>
 
-            <Text style={styles.heading}>Test rates</Text>
+            <Text style={styles.heading}>Tests</Text>
+            <Text style={styles.copy}>
+              Add or remove one {catalog.role} test, or upload a CSV or Excel file. The first row must be: code, name, kind, cpt, price. Every row is saved as {catalog.role}. Save the file from Excel as CSV if the workbook upload fails.
+            </Text>
+            <Field label="Code" value={testForm.code} onChangeText={(code) => setTestForm({ ...testForm, code })} />
+            <Field label="Name" value={testForm.name} onChangeText={(name) => setTestForm({ ...testForm, name })} />
+            <Field label="CPT" value={testForm.cpt} onChangeText={(cpt) => setTestForm({ ...testForm, cpt })} />
+            <Field label="Price" value={testForm.price} onChangeText={(price) => setTestForm({ ...testForm, price })} />
+            <Pressable onPress={createTest} style={styles.button}>
+              <Text style={styles.buttonText}>Add test</Text>
+            </Pressable>
+            <Pressable onPress={uploadTests} style={styles.button}>
+              <Text style={styles.buttonText}>Upload CSV or Excel</Text>
+            </Pressable>
             {catalog.tests.map((item) => (
-              <PriceRow key={item.code} item={item} onSave={updatePrice} />
+              <PriceRow
+                key={item.code}
+                item={item}
+                onSave={updatePrice}
+                onRemove={deleteTest}
+                onSaveContent={async (content) => {
+                  await saveContent(token, content);
+                  setNotice(`Saved details for ${content.code}.`);
+                }}
+              />
+            ))}
+
+            <Text style={styles.heading}>General questionnaire</Text>
+            <Text style={styles.copy}>These questions appear after patient information on this service only.</Text>
+            <QuestionEditor
+              questions={catalog.general_questions || []}
+              onSave={async (questions) => {
+                await saveQuestions(token, { key: 'general', questions });
+                setNotice('General questions saved.');
+              }}
+            />
+            {(catalog.question_groups || []).map((group) => (
+              <View key={group.key}>
+                <Text style={styles.heading}>{group.title}</Text>
+                <QuestionEditor
+                  questions={group.questions || []}
+                  onSave={async (questions) => {
+                    await saveQuestions(token, { key: group.key, questions });
+                    setNotice(`${group.title} questions saved.`);
+                  }}
+                />
+              </View>
             ))}
 
             <Text style={styles.heading}>Register a business</Text>
-            <Text style={styles.copy}>This adds a bookable company beside Reya Lab and Reya Imaging.</Text>
+            <Text style={styles.copy}>
+              This creates a separate {catalog.role} business with its own login. It starts empty, uses a different tax identity, and is never billed with {catalog.business_name}.
+            </Text>
             <Field label="Business name" value={business.name} onChangeText={(name) => setBusiness({ ...business, name })} />
             <Field label="Contact email" value={business.email} onChangeText={(email) => setBusiness({ ...business, email })} />
-            <View style={styles.row}>
-              <Pressable onPress={() => setBusiness({ ...business, lab: !business.lab })} style={styles.check}>
-                <Text style={styles.copy}>{business.lab ? '✓' : '○'} Lab</Text>
-              </Pressable>
-              <Pressable onPress={() => setBusiness({ ...business, imaging: !business.imaging })} style={styles.check}>
-                <Text style={styles.copy}>{business.imaging ? '✓' : '○'} Imaging</Text>
-              </Pressable>
-            </View>
             <Pressable onPress={addBusiness} style={styles.button}>
               <Text style={styles.buttonText}>Add business</Text>
             </Pressable>
-            {catalog.businesses.map((item) => (
-              <Text key={item.id} style={styles.copy}>
-                {item.name} · {(item.services || []).join(', ')}
-              </Text>
-            ))}
-
-            <Text style={styles.heading}>Create a login</Text>
+            <Text style={styles.heading}>Staff logins</Text>
             <Text style={styles.copy}>
               {catalog.email_ready
-                ? 'An email is sent with a temporary password.'
-                : 'Email is not connected yet. The temporary password is shown here once.'}
+                ? `An email is sent with a temporary password. The login can edit only ${catalog.business_name}.`
+                : `Email is not connected yet. The temporary password is shown here once and works only for ${catalog.business_name}.`}
             </Text>
             <Field label="Name" value={invite.name} onChangeText={(name) => setInvite({ ...invite, name })} />
             <Field label="Email" value={invite.email} onChangeText={(email) => setInvite({ ...invite, email })} />
@@ -187,17 +301,95 @@ export function AdminScreen({ onHome, onAbout }) {
   );
 }
 
-function PriceRow({ item, onSave }) {
+function PriceRow({ item, onSave, onRemove, onSaveContent }) {
   const [price, setPrice] = useState(String(item.price));
+  const [summary, setSummary] = useState(item.summary || '');
+  const [details, setDetails] = useState(
+    (item.sections || []).map((section) => `${section.title || ''}\n${section.body || ''}`).join('\n\n')
+  );
   return (
-    <View style={styles.priceRow}>
-      <View style={styles.priceCopy}>
-        <Text style={styles.copy}>{item.name}</Text>
-        <Text style={styles.meta}>{item.kind} · {item.code}</Text>
+    <View style={styles.testCard}>
+      <View style={styles.priceRow}>
+        <View style={styles.priceCopy}>
+          <Text style={styles.copy}>{item.name}</Text>
+          <Text style={styles.meta}>{item.kind} · {item.code}</Text>
+        </View>
+        <TextInput value={price} onChangeText={setPrice} style={styles.priceInput} />
+        <Pressable onPress={() => onSave(item.code, price)} style={styles.small}>
+          <Text style={styles.buttonText}>Save price</Text>
+        </Pressable>
+        <Pressable onPress={() => onRemove(item.code)} style={styles.small}>
+          <Text style={styles.buttonText}>Remove</Text>
+        </Pressable>
       </View>
-      <TextInput value={price} onChangeText={setPrice} style={styles.priceInput} />
-      <Pressable onPress={() => onSave(item.code, price)} style={styles.small}>
-        <Text style={styles.buttonText}>Save</Text>
+      <Field label="Short description" value={summary} onChangeText={setSummary} />
+      <Field
+        label="Test details"
+        value={details}
+        multiline
+        onChangeText={setDetails}
+      />
+      <Text style={styles.meta}>Put a heading on its own line, then the detail text. Leave a blank line between sections.</Text>
+      <Pressable
+        onPress={() =>
+          onSaveContent({
+            code: item.code,
+            summary,
+            sections: details
+              .split(/\n\s*\n/)
+              .map((block) => block.trim())
+              .filter(Boolean)
+              .map((block) => {
+                const [title, ...rest] = block.split('\n');
+                return { title: title.trim(), body: rest.join('\n').trim() || title.trim() };
+              }),
+          })
+        }
+        style={styles.button}
+      >
+        <Text style={styles.buttonText}>Save test details</Text>
+      </Pressable>
+    </View>
+  );
+}
+
+function QuestionEditor({ questions, onSave }) {
+  const [rows, setRows] = useState(questions || []);
+  const [prompt, setPrompt] = useState('');
+
+  useEffect(() => {
+    setRows(questions || []);
+  }, [questions]);
+
+  return (
+    <View>
+      {rows.map((question, index) => (
+        <View key={question.id || index} style={styles.priceRow}>
+          <TextInput
+            value={question.prompt}
+            onChangeText={(prompt) => setRows(rows.map((row, rowIndex) => (rowIndex === index ? { ...row, prompt } : row)))}
+            style={[styles.input, styles.priceCopy]}
+          />
+          <Pressable onPress={() => setRows(rows.filter((_, rowIndex) => rowIndex !== index))} style={styles.small}>
+            <Text style={styles.buttonText}>Remove</Text>
+          </Pressable>
+        </View>
+      ))}
+      <Field label="New question" value={prompt} onChangeText={setPrompt} />
+      <Pressable
+        onPress={() => {
+          if (!prompt.trim()) {
+            return;
+          }
+          setRows([...rows, { id: `q${Date.now()}`, prompt: prompt.trim(), type: 'yes_no' }]);
+          setPrompt('');
+        }}
+        style={styles.button}
+      >
+        <Text style={styles.buttonText}>Add question</Text>
+      </Pressable>
+      <Pressable onPress={() => onSave(rows)} style={styles.button}>
+        <Text style={styles.buttonText}>Save questions</Text>
       </Pressable>
     </View>
   );
@@ -246,6 +438,7 @@ const styles = StyleSheet.create({
   notice: { fontFamily: font, color: colors.ink, marginTop: 12 },
   row: { flexDirection: 'row', gap: 16, marginTop: 8 },
   check: { paddingVertical: 8 },
+  testCard: { marginTop: 16, paddingTop: 8, borderTopWidth: 1, borderTopColor: colors.line },
   priceRow: { flexDirection: 'row', alignItems: 'center', gap: 12, marginTop: 12 },
   priceCopy: { flex: 1 },
   priceInput: {

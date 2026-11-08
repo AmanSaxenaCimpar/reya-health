@@ -830,56 +830,50 @@ IMAGING_QUESTIONNAIRES = {
 }
 
 
-def questionnaires_for(lab_codes=None, imaging_codes=None):
+def questionnaires_for(lab_codes=None, imaging_codes=None, service=None, business=None):
+    from portal_store import get_business, public_tests, saved_questions
+
     lab_codes = lab_codes or []
     imaging_codes = imaging_codes or []
-    lab_map = {item["code"]: item for item in LAB_TESTS}
-    imaging_map = {item["code"]: item for item in IMAGING_TESTS}
+    office = get_business(business) if business else None
+    if office is None:
+        fallback = "reya-imaging" if service == "imaging" or (imaging_codes and not lab_codes) else "reya-lab"
+        office = get_business(fallback)
+    kind = office["kind"] if office else "lab"
+    business_id = office["id"] if office else fallback
+    general = saved_questions(business_id, "general")
+    if general is None:
+        general = SHARED_QUESTIONS
+    catalog = {item["code"]: item for item in public_tests(business_id)}
+    blocks = LAB_QUESTIONNAIRES if kind == "lab" else IMAGING_QUESTIONNAIRES
+    codes = imaging_codes if kind == "imaging" else lab_codes
 
     sections = [
         {
-            "key": "shared",
-            "title": "Questions for all services",
+            "key": f"general-{business_id}",
+            "title": "General questionnaire",
             "scope": "shared",
-            "questions": SHARED_QUESTIONS,
+            "questions": general,
         }
     ]
 
-    seen_lab = set()
-    for code in lab_codes:
-        test = lab_map.get(code)
+    seen = set()
+    for code in codes:
+        test = catalog.get(code)
         if not test:
             continue
-        key = test["questionnaire_key"]
-        if key in seen_lab:
+        key = test.get("questionnaire_key") or code
+        if not key or key in seen:
             continue
-        seen_lab.add(key)
-        block = LAB_QUESTIONNAIRES[key]
+        seen.add(key)
+        block = blocks.get(key) or {"title": test.get("name") or key, "questions": []}
+        edited = saved_questions(business_id, key)
         sections.append(
             {
                 "key": key,
-                "title": f"Lab · {block['title']}",
-                "scope": "lab",
-                "questions": block["questions"],
-            }
-        )
-
-    seen_imaging = set()
-    for code in imaging_codes:
-        test = imaging_map.get(code)
-        if not test:
-            continue
-        key = test["questionnaire_key"]
-        if key in seen_imaging:
-            continue
-        seen_imaging.add(key)
-        block = IMAGING_QUESTIONNAIRES[key]
-        sections.append(
-            {
-                "key": key,
-                "title": f"Imaging · {block['title']}",
-                "scope": "imaging",
-                "questions": block["questions"],
+                "title": f"{'Imaging' if kind == 'imaging' else 'Lab'} · {block['title']}",
+                "scope": kind,
+                "questions": edited if edited is not None else block.get("questions") or [],
             }
         )
 

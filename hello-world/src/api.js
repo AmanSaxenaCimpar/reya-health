@@ -28,20 +28,24 @@ async function getJson(path) {
   return response.json();
 }
 
-export function confirmCoverage(zip) {
-  return getJson(`/coverage?zip=${encodeURIComponent(zip)}`);
+export function confirmCoverage(zip, service) {
+  const serviceQuery = service ? `&service=${encodeURIComponent(service)}` : '';
+  return getJson(`/coverage?zip=${encodeURIComponent(zip)}${serviceQuery}`);
 }
 
-export function loadCompanies(service) {
-  return getJson(`/companies?service=${encodeURIComponent(service)}`);
+export function loadCompanies(service, zip) {
+  const zipQuery = zip ? `&zip=${encodeURIComponent(zip)}` : '';
+  return getJson(`/companies?service=${encodeURIComponent(service)}${zipQuery}`);
 }
 
-export function loadLabs() {
-  return getJson('/labs');
+export function loadLabs(business) {
+  const query = business ? `?business=${encodeURIComponent(business)}` : '';
+  return getJson(`/labs${query}`);
 }
 
-export function loadImaging() {
-  return getJson('/imaging');
+export function loadImaging(business) {
+  const query = business ? `?business=${encodeURIComponent(business)}` : '';
+  return getJson(`/imaging${query}`);
 }
 
 export async function saveBooking(booking) {
@@ -60,6 +64,12 @@ export async function saveBooking(booking) {
 
 export function loadPricing() {
   return getJson('/pricing');
+}
+
+export function loadQuote(zip, service, business) {
+  const serviceQuery = service ? `&service=${encodeURIComponent(service)}` : '';
+  const businessQuery = business ? `&business=${encodeURIComponent(business)}` : '';
+  return getJson(`/quote?zip=${encodeURIComponent(zip)}${serviceQuery}${businessQuery}`);
 }
 
 async function officeFetch(path, token, options = {}) {
@@ -92,12 +102,42 @@ export function officeCatalog(token) {
   return officeFetch('/office/catalog', token);
 }
 
-export function saveTransport(token, rule) {
-  return officeFetch('/office/transport', token, { method: 'PUT', body: JSON.stringify(rule) });
+export function saveRules(token, rules) {
+  return officeFetch('/office/rules', token, { method: 'PUT', body: JSON.stringify(rules) });
+}
+
+export function addOfficeTest(token, test) {
+  return officeFetch('/office/tests', token, { method: 'POST', body: JSON.stringify(test) });
+}
+
+export function removeOfficeTest(token, code) {
+  return officeFetch(`/office/tests?code=${encodeURIComponent(code)}`, token, { method: 'DELETE' });
+}
+
+export async function uploadOfficeTests(token, file) {
+  const body = new FormData();
+  body.append('file', file);
+  const response = await fetch(`${API_URL}/office/tests/upload?token=${encodeURIComponent(token)}`, {
+    method: 'POST',
+    body,
+  });
+  const payload = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    throw new Error(typeof payload.detail === 'string' ? payload.detail : 'Upload failed.');
+  }
+  return payload;
 }
 
 export function savePrice(token, code, price) {
   return officeFetch('/office/prices', token, { method: 'PUT', body: JSON.stringify({ code, price }) });
+}
+
+export function saveContent(token, content) {
+  return officeFetch('/office/content', token, { method: 'PUT', body: JSON.stringify(content) });
+}
+
+export function saveQuestions(token, payload) {
+  return officeFetch('/office/questions', token, { method: 'PUT', body: JSON.stringify(payload) });
 }
 
 export function registerBusiness(token, business) {
@@ -108,8 +148,14 @@ export function inviteLogin(token, person) {
   return officeFetch('/office/invites', token, { method: 'POST', body: JSON.stringify(person) });
 }
 
-export function loadQuestionnaires(labCodes = [], imagingCodes = []) {
+export function loadQuestionnaires(labCodes = [], imagingCodes = [], service, business) {
   const params = new URLSearchParams();
+  if (service) {
+    params.set('service', service);
+  }
+  if (business) {
+    params.set('business', business);
+  }
   labCodes.forEach((code) => params.append('lab', code));
   imagingCodes.forEach((code) => params.append('imaging', code));
   const query = params.toString();

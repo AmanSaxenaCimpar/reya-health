@@ -5,7 +5,7 @@ import { HEALTHIE_EMBED_URL } from '../BookingFrame';
 import { AREA_LABEL, checkCoverage, locateZip } from '../coverage';
 import { Icon } from '../icons';
 import { SiteHeader } from '../SiteHeader';
-import { colors, font, serviceLabels } from '../theme';
+import { colors, font, money, serviceLabels } from '../theme';
 
 const offeredServices = [
   {
@@ -71,14 +71,14 @@ export function HomeScreen({ onAbout, onOffice, onBook, onCompanyBook }) {
     }
 
     if (result?.served) {
-      showCompanies(service.key).catch(() => {
+      showCompanies(service.key, result?.zip).catch(() => {
         setStatus('The Python service is not running, so registered companies could not be loaded.');
       });
     }
   }
 
-  async function showCompanies(service) {
-    const rows = await loadCompanies(service);
+  async function showCompanies(service, zip) {
+    const rows = await loadCompanies(service, zip);
     setCompanies(rows);
   }
 
@@ -100,11 +100,11 @@ export function HomeScreen({ onAbout, onOffice, onBook, onCompanyBook }) {
         setStatus('Enter a full address or a 5-digit ZIP code.');
         return;
       }
-      const decision = await confirmCoverage(coverage.zip);
+      const decision = await confirmCoverage(coverage.zip, serviceKey);
       setAddress(coverage.label);
-      setResult({ ...coverage, served: decision.served, area: decision.area });
+      setResult({ ...coverage, ...decision, served: decision.served });
       if (decision.served) {
-        await showCompanies(serviceKey);
+        await showCompanies(serviceKey, coverage.zip);
       }
     } catch (error) {
       setStatus(
@@ -125,7 +125,7 @@ export function HomeScreen({ onAbout, onOffice, onBook, onCompanyBook }) {
     setCompanies([]);
     if (place === 'home' && result?.served) {
       try {
-        await showCompanies(key);
+        await showCompanies(key, result.zip);
       } catch (error) {
         setStatus('The Python service is not running, so registered companies could not be loaded.');
       }
@@ -145,6 +145,7 @@ export function HomeScreen({ onAbout, onOffice, onBook, onCompanyBook }) {
       address: result.label,
       zip: result.zip,
       company: company.name,
+      business: company.id,
       place: 'home',
       book: company.book,
       url: company.url || HEALTHIE_EMBED_URL,
@@ -261,7 +262,13 @@ export function HomeScreen({ onAbout, onOffice, onBook, onCompanyBook }) {
           {place === 'home' && result?.served ? (
             <View style={styles.answer}>
               <Text style={styles.answerTitle}>Yes. Care is available for this address.</Text>
-              <Text style={styles.copy}>ZIP {result.zip} is inside the current range.</Text>
+              <Text style={styles.copy}>
+                ZIP {result.zip}
+                {result.miles != null ? ` is ${result.miles} miles away.` : ' is inside the current range.'}{' '}
+                {result.travel_total != null
+                  ? `Transportation ${money(result.transport_fee)} plus distance fee ${money(result.extra)}.`
+                  : ''}
+              </Text>
               <Text style={styles.listTitle}>
                 Registered companies that offer {serviceLabels[intent]}
               </Text>
@@ -275,6 +282,11 @@ export function HomeScreen({ onAbout, onOffice, onBook, onCompanyBook }) {
                       </Text>
                     ))}
                   </View>
+                  {company.travel_total != null ? (
+                    <Text style={styles.copy}>
+                      Transportation {money(company.transport_fee)} plus distance fee {money(company.extra)}.
+                    </Text>
+                  ) : null}
                   <View style={styles.clickToBook}>
                     <Text style={styles.clickToBookText}>Click to book</Text>
                   </View>

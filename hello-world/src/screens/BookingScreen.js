@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
-import { loadImaging, loadLabs, loadPricing, loadQuestionnaires, saveBooking } from '../api';
+import { loadImaging, loadLabs, loadQuestionnaires, loadQuote, saveBooking } from '../api';
 import { SiteHeader } from '../SiteHeader';
 import { colors, font, money } from '../theme';
 
@@ -129,7 +129,7 @@ export function BookingScreen({ visit, onHome, onAbout, onBack }) {
     email: '',
     preferred: '',
   });
-  const [transport, setTransport] = useState(null);
+  const [quote, setQuote] = useState(null);
   const [holdStarted, setHoldStarted] = useState(0);
   const [stepKey, setStepKey] = useState('order');
   const [done, setDone] = useState(false);
@@ -144,19 +144,32 @@ export function BookingScreen({ visit, onHome, onAbout, onBack }) {
   }, [stepKey, holdStarted]);
 
   useEffect(() => {
-    loadPricing()
-      .then((payload) => setTransport(payload.transport || null))
-      .catch(() => setTransport(null));
-  }, []);
+    if (!visit.zip) {
+      return;
+    }
+    const service = visit.service === 'imaging' ? 'imaging' : 'lab';
+    const business = visit.business || (service === 'imaging' ? 'reya-imaging' : 'reya-lab');
+    loadQuote(visit.zip, service, business)
+      .then(setQuote)
+      .catch(() => setQuote(null));
+  }, [visit.zip, visit.service, visit.business]);
 
   useEffect(() => {
-    Promise.all([loadLabs(), loadImaging()])
-      .then(([labRows, imagingRows]) => {
-        setLabs(labRows);
-        setImaging(imagingRows);
+    const service = visit.service === 'imaging' ? 'imaging' : 'lab';
+    const business = visit.business || (service === 'imaging' ? 'reya-imaging' : 'reya-lab');
+    const loadTests = service === 'imaging' ? loadImaging : loadLabs;
+    loadTests(business)
+      .then((rows) => {
+        if (service === 'imaging') {
+          setImaging(rows);
+          setLabs([]);
+        } else {
+          setLabs(rows);
+          setImaging([]);
+        }
       })
       .catch(() => setLoadError('Could not load tests from the Python API.'));
-  }, []);
+  }, [visit.service, visit.business]);
 
   useEffect(() => {
     if (!labPicked.length && !imagingPicked.length) {
@@ -164,14 +177,20 @@ export function BookingScreen({ visit, onHome, onAbout, onBack }) {
       setGeneralSection(null);
       return;
     }
-    loadQuestionnaires(labPicked, imagingPicked)
+    const service = services.includes('imaging') ? 'imaging' : 'lab';
+    loadQuestionnaires(
+      labPicked,
+      imagingPicked,
+      service,
+      visit.business || (service === 'imaging' ? 'reya-imaging' : 'reya-lab')
+    )
       .then((payload) => {
         const rows = payload.sections || [];
         setGeneralSection(rows.find((section) => section.scope === 'shared') || null);
         setSections(rows.filter((section) => section.scope !== 'shared'));
       })
       .catch(() => setLoadError('Could not load questionnaires from the Python API.'));
-  }, [labPicked, imagingPicked]);
+  }, [labPicked, imagingPicked, services, visit.business]);
 
   const lockedService = visit.service === 'lab' || visit.service === 'imaging';
   const steps = ['order'];
@@ -190,12 +209,12 @@ export function BookingScreen({ visit, onHome, onAbout, onBack }) {
   steps.push('schedule', 'info', 'general', 'payment');
 
   const index = Math.max(steps.indexOf(stepKey), 0);
-  const selectedLabs = labs.filter((item) => labPicked.includes(item.code));
-  const selectedImaging = imaging.filter((item) => imagingPicked.includes(item.code));
+  const selectedLabs = services.includes('lab') ? labs.filter((item) => labPicked.includes(item.code)) : [];
+  const selectedImaging = services.includes('imaging') ? imaging.filter((item) => imagingPicked.includes(item.code)) : [];
   const chosen = [...selectedLabs, ...selectedImaging];
   const serviceFee = chosen.reduce((sum, item) => sum + Number(item.price || 0), 0);
   const setupTotal = selectedImaging.reduce((sum, item) => sum + Number(item.setup_fee || 0), 0);
-  const travelFee = Number(transport?.base_fee || 0);
+  const travelFee = Number(quote?.travel_total || 0);
   const total = serviceFee + setupTotal + travelFee;
   const allQuestions = sections.flatMap((section) => section.questions);
   const questionsDone = allQuestions.length > 0 && allQuestions.every((question) => answered(question, answers));
@@ -222,15 +241,13 @@ export function BookingScreen({ visit, onHome, onAbout, onBack }) {
     go(steps[index + 1]);
   }
 
-  function toggleService(key) {
-    setServices((current) =>
-      current.includes(key) ? current.filter((item) => item !== key) : [...current, key]
-    );
-    if (key === 'lab' && services.includes('lab')) {
-      setLabPicked([]);
-    }
-    if (key === 'imaging' && services.includes('imaging')) {
+  function selectService(key) {
+    setServices([key]);
+    if (key === 'lab') {
       setImagingPicked([]);
+    }
+    if (key === 'imaging') {
+      setLabPicked([]);
     }
   }
 
@@ -260,6 +277,11 @@ export function BookingScreen({ visit, onHome, onAbout, onBack }) {
   function confirmVisit() {
     setSaving(true);
     setSaveError('');
+    if (labPicked.length && imagingPicked.length) {
+      setSaveError('Lab and imaging are separate businesses. Book only one service.');
+      setSaving(false);
+      return;
+    }
     const sectionsToSave = [...sections, generalSection].filter(Boolean).map((section) => ({
       title: section.title,
       items: (section.questions || []).map((question) => ({
@@ -269,15 +291,16 @@ export function BookingScreen({ visit, onHome, onAbout, onBack }) {
     }));
     saveBooking({
       company: visit.company,
-      service: visit.service,
+      business: visit.business || '',
       zip: visit.zip,
       address: visit.address,
       order,
       order_file: fileName,
       appointment_date: date ? formatDate(date) : '',
       appointment_time: time,
-      labs: selectedLabs.map(testLine),
-      imaging: selectedImaging.map(testLine),
+      service: services.includes('imaging') ? 'imaging' : 'lab',
+      labs: services.includes('lab') ? selectedLabs.map(testLine) : [],
+      imaging: services.includes('imaging') ? selectedImaging.map(testLine) : [],
       questions: sectionsToSave,
       info,
       service_fee: serviceFee,
@@ -368,18 +391,20 @@ export function BookingScreen({ visit, onHome, onAbout, onBack }) {
       {stepKey === 'choose' ? (
         <View>
           <Text style={styles.title}>Choose a service</Text>
-          <Text style={styles.copy}>Select Lab, Imaging, or both. Shared and specific questionnaires follow your selections.</Text>
+          <Text style={styles.copy}>
+            Choose laboratory or imaging. They are separate businesses and cannot be booked together.
+          </Text>
           <Choice
             title="Laboratory"
             detail="Top lab panels and individual tests"
             on={services.includes('lab')}
-            onPress={() => toggleService('lab')}
+            onPress={() => selectService('lab')}
           />
           <Choice
             title="Imaging"
             detail="X-ray, EKG, and ultrasound"
             on={services.includes('imaging')}
-            onPress={() => toggleService('imaging')}
+            onPress={() => selectService('imaging')}
           />
         </View>
       ) : null}
@@ -543,7 +568,8 @@ export function BookingScreen({ visit, onHome, onAbout, onBack }) {
           serviceFee={serviceFee}
           setupTotal={setupTotal}
           travelFee={travelFee}
-          transport={transport}
+          quote={quote}
+          serviceName={services.includes('imaging') ? 'Imaging' : 'Lab'}
           total={total}
           holdStarted={holdStarted}
           saveError={saveError}
@@ -604,7 +630,8 @@ function ReviewDetails({
   serviceFee,
   setupTotal,
   travelFee,
-  transport,
+  quote,
+  serviceName,
   total,
   holdStarted,
   saveError,
@@ -628,8 +655,11 @@ function ReviewDetails({
           Appointment time is reserved for {minutes}:{seconds} minutes.
         </Text>
       </View>
-      <ReviewSection title="Lab Location and Service Type" onEdit={() => onEdit(visit.service === 'imaging' ? 'imaging' : 'lab')}>
-        <ReviewRow label="Lab Location" value={visit.address || visit.zip} />
+      <ReviewSection
+        title={`${serviceName} Location and Service Type`}
+        onEdit={() => onEdit(serviceName === 'Imaging' ? 'imaging' : 'lab')}
+      >
+        <ReviewRow label="Location" value={visit.address || visit.zip} />
         <ReviewRow label="Service Type" value={chosen.map((item) => item.name).join(', ')} />
       </ReviewSection>
       <ReviewSection title="Appointment Date and Time" onEdit={() => onEdit('schedule')}>
@@ -646,9 +676,14 @@ function ReviewDetails({
       <View style={styles.feeBox}>
         <ReviewRow label="Service fee" value={money(serviceFee)} />
         {setupTotal > 0 ? <ReviewRow label="Setup fee" value={money(setupTotal)} /> : null}
+        <ReviewRow label="Transportation fee" value={money(quote?.transport_fee || 0)} />
         <ReviewRow
-          label="Transportation"
-          value={`${money(travelFee)} base, then $${Number(transport?.per_mile || 0).toFixed(2)} per mile after ${transport?.included_miles ?? 0} miles`}
+          label="Distance fee"
+          value={
+            quote?.miles == null
+              ? 'Calculated from the ZIP'
+              : `${quote.miles} miles (${quote.from_miles}–${quote.to_miles}) · ${money(quote.extra || 0)}`
+          }
         />
         <Text style={styles.answer}>Total {money(total)}</Text>
       </View>
