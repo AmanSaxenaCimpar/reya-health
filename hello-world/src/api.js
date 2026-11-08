@@ -58,6 +58,56 @@ export async function saveBooking(booking) {
   return payload;
 }
 
+export function loadPricing() {
+  return getJson('/pricing');
+}
+
+async function officeFetch(path, token, options = {}) {
+  const response = await fetch(`${API_URL}${path}${path.includes('?') ? '&' : '?'}token=${encodeURIComponent(token)}`, {
+    ...options,
+    headers: { 'Content-Type': 'application/json', ...(options.headers || {}) },
+  });
+  const payload = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    throw new Error(typeof payload.detail === 'string' ? payload.detail : 'Back office request failed.');
+  }
+  return payload;
+}
+
+export function officeLogin(email, password) {
+  return fetch(`${API_URL}/office/login`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ email, password }),
+  }).then(async (response) => {
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      throw new Error(typeof payload.detail === 'string' ? payload.detail : 'Sign-in failed.');
+    }
+    return payload;
+  });
+}
+
+export function officeCatalog(token) {
+  return officeFetch('/office/catalog', token);
+}
+
+export function saveTransport(token, rule) {
+  return officeFetch('/office/transport', token, { method: 'PUT', body: JSON.stringify(rule) });
+}
+
+export function savePrice(token, code, price) {
+  return officeFetch('/office/prices', token, { method: 'PUT', body: JSON.stringify({ code, price }) });
+}
+
+export function registerBusiness(token, business) {
+  return officeFetch('/office/businesses', token, { method: 'POST', body: JSON.stringify(business) });
+}
+
+export function inviteLogin(token, person) {
+  return officeFetch('/office/invites', token, { method: 'POST', body: JSON.stringify(person) });
+}
+
 export function loadQuestionnaires(labCodes = [], imagingCodes = []) {
   const params = new URLSearchParams();
   labCodes.forEach((code) => params.append('lab', code));

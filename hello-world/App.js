@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { Platform, StyleSheet, View } from 'react-native';
 import { StatusBar } from 'expo-status-bar';
+import { AdminScreen } from './src/screens/AdminScreen';
 import { AboutScreen } from './src/screens/AboutScreen';
 import { AccessGate, hasAccess } from './src/screens/AccessGate';
 import { BookingScreen } from './src/screens/BookingScreen';
@@ -29,6 +30,7 @@ export default function App() {
 
   const home = () => setScreen({ name: 'home' });
   const about = () => setScreen({ name: 'about' });
+  const office = () => setScreen({ name: 'office' });
 
   if (!unlocked) {
     return (
@@ -45,11 +47,13 @@ export default function App() {
       {screen.name === 'home' ? (
         <HomeScreen
           onAbout={about}
+          onOffice={office}
           onBook={(visit) => setScreen({ name: 'booking', visit })}
           onCompanyBook={(visit) => setScreen({ name: 'visit', visit })}
         />
       ) : null}
       {screen.name === 'about' ? <AboutScreen onHome={home} /> : null}
+      {screen.name === 'office' ? <AdminScreen onHome={home} onAbout={about} /> : null}
       {screen.name === 'visit' ? (
         <VisitScreen visit={screen.visit} onHome={home} onAbout={about} onBack={home} />
       ) : null}

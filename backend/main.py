@@ -1,3 +1,7 @@
+import hashlib
+import hmac
+import os
+import time
 from pathlib import Path
 from typing import List, Optional
 
@@ -7,6 +11,7 @@ from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
 
 from catalog import IMAGING_TESTS, LAB_TESTS, questionnaires_for
+from portal_store import apply_prices, issue_invite, load, save, transport_fee
 from sharepoint import SharePointError, configured, save_booking
 
 DIST = Path(__file__).resolve().parent.parent / "hello-world" / "dist"
@@ -89,21 +94,183 @@ def coverage(zip: str = Query(...)):
     return {"zip": code, "served": zip_served(code), "area": AREA}
 
 
+def all_companies():
+    extra = []
+    for business in load().get("businesses") or []:
+        extra.append(
+            {
+                "id": business.get("id"),
+                "name": business.get("name"),
+                "services": business.get("services") or [],
+                "book": "flow",
+                "url": None,
+            }
+        )
+    return COMPANIES + extra
+
+
 @app.get("/companies")
 def companies(service: Optional[str] = None):
+    rows = all_companies()
     if service in SERVICE_KEYS:
-        return [company for company in COMPANIES if service in company["services"]]
-    return COMPANIES
+        return [company for company in rows if service in company["services"]]
+    return rows
 
 
 @app.get("/labs")
 def labs():
-    return LAB_TESTS
+    return apply_prices(LAB_TESTS)
 
 
 @app.get("/imaging")
 def imaging():
-    return IMAGING_TESTS
+    return apply_prices(IMAGING_TESTS)
+
+
+@app.get("/pricing")
+def pricing():
+    rule = load()["transport"]
+    return {"transport": rule, "example": transport_fee(rule.get("included_miles") or 0)}
+
+
+class TransportInput(BaseModel):
+    miles: float = 0
+
+
+class OfficeLogin(BaseModel):
+    email: str
+    password: str
+
+
+class TransportRule(BaseModel):
+    base_fee: float
+    included_miles: float
+    per_mile: float
+
+
+class PriceUpdate(BaseModel):
+    code: str
+    price: float
+
+
+class BusinessSetup(BaseModel):
+    name: str
+    email: str
+    services: List[str]
+
+
+class InviteRequest(BaseModel):
+    name: str = ""
+    email: str
+    role: str
+
+
+def office_password() -> str:
+    return os.environ.get("OFFICE_PASSWORD", "ReyaOffice2026")
+
+
+def office_email() -> str:
+    return os.environ.get("OFFICE_EMAIL", "office@reyahealth.com").strip().lower()
+
+
+def office_token(email: str) -> str:
+    expires = str(int(time.time()) + 60 * 60 * 12)
+    payload = f"{email}|{expires}"
+    signature = hmac.new(office_password().encode(), payload.encode(), hashlib.sha256).hexdigest()
+    return f"{payload}|{signature}"
+
+
+def require_office(token: str) -> None:
+    parts = (token or "").split("|")
+    if len(parts) != 3:
+        raise HTTPException(status_code=401, detail="Sign in to the back office again.")
+    email, expires, signature = parts
+    payload = f"{email}|{expires}"
+    expected = hmac.new(office_password().encode(), payload.encode(), hashlib.sha256).hexdigest()
+    if not hmac.compare_digest(signature, expected) or int(expires) < time.time():
+        raise HTTPException(status_code=401, detail="Sign in to the back office again.")
+
+
+@app.post("/office/login")
+def office_login(body: OfficeLogin):
+    email = body.email.strip().lower()
+    invites = load().get("invites") or []
+    invited = next((row for row in invites if row.get("email") == email), None)
+    if invited and hmac.compare_digest(body.password, invited.get("temporary_password") or ""):
+        return {"token": office_token(email), "email": email, "role": invited.get("role")}
+    if email == office_email() and hmac.compare_digest(body.password, office_password()):
+        return {"token": office_token(email), "email": email, "role": "admin"}
+    raise HTTPException(status_code=401, detail="That email or password is not recognized.")
+
+
+@app.get("/office/catalog")
+def office_catalog(token: str = Query(...)):
+    require_office(token)
+    data = load()
+    tests = []
+    for item in apply_prices(LAB_TESTS):
+        tests.append({"code": item["code"], "name": item["name"], "kind": "lab", "price": item["price"]})
+    for item in apply_prices(IMAGING_TESTS):
+        tests.append({"code": item["code"], "name": item["name"], "kind": "imaging", "price": item["price"]})
+    return {
+        "transport": data["transport"],
+        "tests": tests,
+        "businesses": data.get("businesses") or [],
+        "email_ready": bool(os.environ.get("SMTP_HOST", "").strip()),
+    }
+
+
+@app.put("/office/transport")
+def office_transport(body: TransportRule, token: str = Query(...)):
+    require_office(token)
+    data = load()
+    data["transport"] = body.model_dump()
+    save(data)
+    return {"transport": data["transport"], "example": transport_fee(body.included_miles + 5)}
+
+
+@app.put("/office/prices")
+def office_prices(body: PriceUpdate, token: str = Query(...)):
+    require_office(token)
+    data = load()
+    data["prices"][body.code] = body.price
+    save(data)
+    return {"code": body.code, "price": body.price}
+
+
+@app.post("/office/businesses")
+def office_business(body: BusinessSetup, token: str = Query(...)):
+    require_office(token)
+    services = [item for item in body.services if item in SERVICE_KEYS]
+    if not body.name.strip() or not services:
+        raise HTTPException(status_code=400, detail="Enter a business name and at least one service.")
+    data = load()
+    business = {
+        "id": f"biz-{int(time.time())}",
+        "name": body.name.strip(),
+        "email": body.email.strip(),
+        "services": services,
+    }
+    data["businesses"].append(business)
+    save(data)
+    return business
+
+
+@app.post("/office/invites")
+def office_invite(body: InviteRequest, token: str = Query(...)):
+    require_office(token)
+    if body.role not in {"provider", "staff"}:
+        raise HTTPException(status_code=400, detail="Choose a provider or staff login.")
+    if "@" not in body.email:
+        raise HTTPException(status_code=400, detail="Enter an email address.")
+    invite = issue_invite(body.email, body.role, body.name)
+    sent = bool(os.environ.get("SMTP_HOST", "").strip())
+    return {
+        "email": invite["email"],
+        "role": invite["role"],
+        "emailed": sent,
+        "temporary_password": None if sent else invite["temporary_password"],
+    }
 
 
 class TestLine(BaseModel):

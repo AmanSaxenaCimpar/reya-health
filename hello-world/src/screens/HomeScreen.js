@@ -39,7 +39,7 @@ const offeredServices = [
 const serviceChoices = Object.entries(serviceLabels).map(([key, label]) => ({ key, label }));
 const CHICAGO_ZIP = '60601';
 
-export function HomeScreen({ onAbout, onBook, onCompanyBook }) {
+export function HomeScreen({ onAbout, onOffice, onBook, onCompanyBook }) {
   const scrollRef = useRef(null);
   const [intent, setIntent] = useState('lab');
   const [place, setPlace] = useState('home');
@@ -158,7 +158,11 @@ export function HomeScreen({ onAbout, onBook, onCompanyBook }) {
 
   return (
     <ScrollView ref={scrollRef} style={styles.page} contentContainerStyle={styles.content}>
-      <SiteHeader onHome={() => scrollRef.current?.scrollTo({ y: 0, animated: true })} onAbout={onAbout} />
+      <SiteHeader
+        onHome={() => scrollRef.current?.scrollTo({ y: 0, animated: true })}
+        onAbout={onAbout}
+        onOffice={onOffice}
+      />
       <View style={styles.body}>
         <Text style={styles.title}>Reya Health</Text>
         <Text style={styles.copy}>

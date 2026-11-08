@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
-import { loadImaging, loadLabs, loadQuestionnaires, saveBooking } from '../api';
+import { loadImaging, loadLabs, loadPricing, loadQuestionnaires, saveBooking } from '../api';
 import { SiteHeader } from '../SiteHeader';
 import { colors, font, money } from '../theme';
 
@@ -36,6 +36,17 @@ function pickFile() {
     input.onchange = () => resolve(input.files?.[0]?.name || '');
     input.click();
   });
+}
+
+function detailLines(body) {
+  return String(body || '')
+    .split('\n')
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .map((line) => ({
+      bullet: !/[.!?]$/.test(line) && line.length < 140,
+      text: line,
+    }));
 }
 
 function answerText(value) {
@@ -116,12 +127,27 @@ export function BookingScreen({ visit, onHome, onAbout, onBack }) {
     relationship: '',
     phone: '',
     email: '',
+    preferred: '',
   });
+  const [transport, setTransport] = useState(null);
+  const [holdStarted, setHoldStarted] = useState(0);
   const [stepKey, setStepKey] = useState('order');
   const [done, setDone] = useState(false);
   const [stored, setStored] = useState(false);
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState('');
+
+  useEffect(() => {
+    if (stepKey === 'payment' && !holdStarted) {
+      setHoldStarted(Date.now());
+    }
+  }, [stepKey, holdStarted]);
+
+  useEffect(() => {
+    loadPricing()
+      .then((payload) => setTransport(payload.transport || null))
+      .catch(() => setTransport(null));
+  }, []);
 
   useEffect(() => {
     Promise.all([loadLabs(), loadImaging()])
@@ -169,7 +195,8 @@ export function BookingScreen({ visit, onHome, onAbout, onBack }) {
   const chosen = [...selectedLabs, ...selectedImaging];
   const serviceFee = chosen.reduce((sum, item) => sum + Number(item.price || 0), 0);
   const setupTotal = selectedImaging.reduce((sum, item) => sum + Number(item.setup_fee || 0), 0);
-  const total = serviceFee + setupTotal;
+  const travelFee = Number(transport?.base_fee || 0);
+  const total = serviceFee + setupTotal + travelFee;
   const allQuestions = sections.flatMap((section) => section.questions);
   const questionsDone = allQuestions.length > 0 && allQuestions.every((question) => answered(question, answers));
   const generalQuestions = generalSection?.questions || [];
@@ -470,6 +497,11 @@ export function BookingScreen({ visit, onHome, onAbout, onBack }) {
               </Pressable>
             ))}
           </View>
+          <Field
+            label="Preferred first name"
+            value={info.preferred}
+            onChangeText={(preferred) => setInfo({ ...info, preferred })}
+          />
           <Field label="Phone" value={info.phone} placeholder="(312) 555-0100" onChangeText={(phone) => setInfo({ ...info, phone })} />
           <Field label="Email" value={info.email} placeholder="you@email.com" onChangeText={(email) => setInfo({ ...info, email })} />
         </View>
@@ -502,21 +534,21 @@ export function BookingScreen({ visit, onHome, onAbout, onBack }) {
       ) : null}
 
       {stepKey === 'payment' ? (
-        <View>
-          <Text style={styles.title}>Payment</Text>
-          <View style={styles.notice}>
-            <Text style={styles.noticeTitle}>Appointment summary</Text>
-            <Text style={styles.testName}>{chosen.map((item) => item.name).join(', ')}</Text>
-            <Text style={styles.copy}>
-              {visit.company} · At home · ZIP {visit.zip}
-              {date ? ` · ${formatDate(date)} · ${time}` : ''}
-            </Text>
-            <Text style={styles.copy}>Service fee {money(serviceFee)}</Text>
-            {setupTotal > 0 ? <Text style={styles.copy}>Setup fee {money(setupTotal)}</Text> : null}
-            <Text style={styles.answer}>Total {money(total)}</Text>
-          </View>
-          {saveError ? <Text style={styles.error}>{saveError}</Text> : null}
-        </View>
+        <ReviewDetails
+          visit={visit}
+          chosen={chosen}
+          date={date}
+          time={time}
+          info={info}
+          serviceFee={serviceFee}
+          setupTotal={setupTotal}
+          travelFee={travelFee}
+          transport={transport}
+          total={total}
+          holdStarted={holdStarted}
+          saveError={saveError}
+          onEdit={go}
+        />
       ) : null}
 
       <View style={styles.navRow}>
@@ -540,6 +572,111 @@ export function BookingScreen({ visit, onHome, onAbout, onBack }) {
         )}
       </View>
     </Page>
+  );
+}
+
+function DetailBody({ body }) {
+  const lines = detailLines(body);
+  return (
+    <View style={styles.dropdownBody}>
+      {lines.map((line, index) =>
+        line.bullet ? (
+          <View key={`${line.text}-${index}`} style={styles.bulletRow}>
+            <Text style={styles.bulletMark}>•</Text>
+            <Text style={styles.bulletText}>{line.text}</Text>
+          </View>
+        ) : (
+          <Text key={`${line.text}-${index}`} style={styles.paragraph}>
+            {line.text}
+          </Text>
+        )
+      )}
+    </View>
+  );
+}
+
+function ReviewDetails({
+  visit,
+  chosen,
+  date,
+  time,
+  info,
+  serviceFee,
+  setupTotal,
+  travelFee,
+  transport,
+  total,
+  holdStarted,
+  saveError,
+  onEdit,
+}) {
+  const [now, setNow] = useState(Date.now());
+  useEffect(() => {
+    const timer = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(timer);
+  }, []);
+  const remaining = Math.max(0, 15 * 60 - Math.floor((now - (holdStarted || now)) / 1000));
+  const minutes = String(Math.floor(remaining / 60)).padStart(2, '0');
+  const seconds = String(remaining % 60).padStart(2, '0');
+  const legal = [info.first, info.last].filter(Boolean).join(' ');
+  return (
+    <View>
+      <Text style={styles.reviewTitle}>Review Appointment Details</Text>
+      <View style={styles.hold}>
+        <Text style={styles.holdMark}>!</Text>
+        <Text style={styles.holdText}>
+          Appointment time is reserved for {minutes}:{seconds} minutes.
+        </Text>
+      </View>
+      <ReviewSection title="Lab Location and Service Type" onEdit={() => onEdit(visit.service === 'imaging' ? 'imaging' : 'lab')}>
+        <ReviewRow label="Lab Location" value={visit.address || visit.zip} />
+        <ReviewRow label="Service Type" value={chosen.map((item) => item.name).join(', ')} />
+      </ReviewSection>
+      <ReviewSection title="Appointment Date and Time" onEdit={() => onEdit('schedule')}>
+        <ReviewRow label="Appointment Date" value={date ? formatDate(date) : ''} />
+        <ReviewRow label="Appointment Time" value={time} />
+      </ReviewSection>
+      <ReviewSection title="Patient Details" onEdit={() => onEdit('info')}>
+        <ReviewRow label="Preferred First Name" value={info.preferred || info.first} />
+        <ReviewRow label="Legal Name" value={legal} />
+        <ReviewRow label="Date of Birth" value={info.dob} />
+        <ReviewRow label="Sex" value={info.gender} />
+        <ReviewRow label="Address" value={visit.address || visit.zip} />
+      </ReviewSection>
+      <View style={styles.feeBox}>
+        <ReviewRow label="Service fee" value={money(serviceFee)} />
+        {setupTotal > 0 ? <ReviewRow label="Setup fee" value={money(setupTotal)} /> : null}
+        <ReviewRow
+          label="Transportation"
+          value={`${money(travelFee)} base, then $${Number(transport?.per_mile || 0).toFixed(2)} per mile after ${transport?.included_miles ?? 0} miles`}
+        />
+        <Text style={styles.answer}>Total {money(total)}</Text>
+      </View>
+      {saveError ? <Text style={styles.error}>{saveError}</Text> : null}
+    </View>
+  );
+}
+
+function ReviewSection({ title, onEdit, children }) {
+  return (
+    <View style={styles.reviewSection}>
+      <View style={styles.reviewHead}>
+        <Text style={styles.reviewHeading}>{title}</Text>
+        <Pressable onPress={onEdit}>
+          <Text style={styles.editLink}>Edit ›</Text>
+        </Pressable>
+      </View>
+      {children}
+    </View>
+  );
+}
+
+function ReviewRow({ label, value }) {
+  return (
+    <View style={styles.reviewRow}>
+      <Text style={styles.reviewLabel}>{label}</Text>
+      <Text style={styles.reviewValue}>{value}</Text>
+    </View>
   );
 }
 
@@ -692,7 +829,7 @@ function Catalog({ title, items, picked, onToggle }) {
                             <Text style={styles.dropdownTitle}>{section.title}</Text>
                             <Text style={styles.dropdownMark}>{sectionOn ? '−' : '+'}</Text>
                           </Pressable>
-                          {sectionOn ? <Text style={styles.dropdownBody}>{section.body}</Text> : null}
+                          {sectionOn ? <DetailBody body={section.body} /> : null}
                         </View>
                       );
                     })
@@ -860,6 +997,45 @@ const styles = StyleSheet.create({
     outlineStyle: 'none',
   },
   answer: { fontFamily: font, fontWeight: '700', color: colors.ink, fontSize: 20, marginTop: 8 },
+  reviewTitle: { fontFamily: font, fontSize: 32, fontWeight: '700', color: colors.ink },
+  hold: {
+    marginTop: 18,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+    borderWidth: 1,
+    borderColor: '#E6B325',
+    borderRadius: 12,
+    overflow: 'hidden',
+  },
+  holdMark: {
+    backgroundColor: '#F5C518',
+    color: colors.ink,
+    fontFamily: font,
+    fontWeight: '700',
+    paddingHorizontal: 14,
+    paddingVertical: 14,
+  },
+  holdText: { fontFamily: font, color: colors.ink, flex: 1, paddingRight: 12 },
+  reviewSection: { marginTop: 26 },
+  reviewHead: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    borderBottomWidth: 1,
+    borderBottomColor: '#D6DDF5',
+    paddingBottom: 8,
+  },
+  reviewHeading: { fontFamily: font, color: '#3156C9', fontSize: 18, fontWeight: '700' },
+  editLink: { fontFamily: font, color: '#3156C9', fontWeight: '700' },
+  reviewRow: { flexDirection: 'row', gap: 16, paddingVertical: 10 },
+  reviewLabel: { fontFamily: font, fontWeight: '700', color: colors.ink, width: 180 },
+  reviewValue: { fontFamily: font, color: colors.ink, flex: 1 },
+  feeBox: { marginTop: 22 },
+  bulletRow: { flexDirection: 'row', gap: 8, marginTop: 6 },
+  bulletMark: { fontFamily: font, color: colors.ink, lineHeight: 22 },
+  bulletText: { fontFamily: font, color: colors.ink, lineHeight: 22, flex: 1 },
+  paragraph: { fontFamily: font, color: colors.ink, lineHeight: 22, marginTop: 8 },
   section: { marginTop: 22 },
   sectionTitle: { fontFamily: font, fontSize: 20, fontWeight: '700', color: colors.purple },
   question: { marginTop: 14, borderWidth: 1, borderColor: colors.line, borderRadius: 14, padding: 14 },
